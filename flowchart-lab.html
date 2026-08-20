@@ -1,0 +1,2609 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Flowchart Lab — Sugiyama layout workbench</title>
+<meta name="description" content="A Sugiyama-pipeline flowchart layout engine you can take apart: swap the layering algorithm, watch the crossing count move, compare the result against mermaid, export to draw.io or Office.">
+<meta name="theme-color" content="#14181d">
+<meta name="color-scheme" content="dark">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 18 18'%3E%3Crect width='18' height='18' rx='3' fill='%2314181d'/%3E%3Crect x='6' y='2' width='6' height='4' fill='none' stroke='%234d9fe8' stroke-width='1.6'/%3E%3Crect x='1' y='12' width='6' height='4' fill='none' stroke='%2378828e' stroke-width='1.6'/%3E%3Crect x='11' y='12' width='6' height='4' fill='none' stroke='%2378828e' stroke-width='1.6'/%3E%3Cpath d='M9 6v3H4v3M9 9h5v3' fill='none' stroke='%23d99a2b' stroke-width='1.6'/%3E%3C/svg%3E">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Flowchart Lab">
+<meta property="og:description" content="A Sugiyama-pipeline flowchart layout engine you can take apart, side by side with mermaid.">
+<meta name="twitter:card" content="summary">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --graphite:#14181d; --slate:#1b2129; --panel:#212932; --panel-hi:#28313c;
+  --rule:#2f3844; --rule-hi:#414c5c;
+  --vellum:#f4f2ed; --ink:#161a1f;
+  --dim:#78828e; --mid:#a7b0bb; --bright:#e4e8ed;
+  --signal:#4d9fe8; --trace:#d99a2b; --good:#5fb37a; --bad:#d97070;
+  --mono:"IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{
+  margin:0; background:var(--graphite); color:var(--mid);
+  font-family:var(--mono); font-size:13px; line-height:1.5;
+  -webkit-font-smoothing:antialiased;
+  display:grid; grid-template-rows:auto minmax(0,1fr);
+}
+
+/* ---------- header ---------- */
+header{
+  display:flex; align-items:center; gap:18px; padding:0 16px; height:52px;
+  border-bottom:1px solid var(--rule); background:var(--slate);
+}
+.mark{display:flex; align-items:center; gap:9px; color:var(--bright); font-weight:600; letter-spacing:.01em}
+.mark svg{display:block}
+.mark small{color:var(--dim); font-weight:400; letter-spacing:.02em}
+.spacer{flex:1}
+.exports{display:flex; gap:6px; flex-wrap:wrap}
+
+button, select, input[type=number]{
+  font-family:var(--mono); font-size:12px; color:var(--mid);
+  background:var(--panel); border:1px solid var(--rule-hi); border-radius:4px;
+  padding:6px 10px; cursor:pointer; transition:background .12s, border-color .12s, color .12s;
+}
+button:hover, select:hover{background:var(--panel-hi); color:var(--bright); border-color:#4e5a6b}
+button:active{transform:translateY(1px)}
+button:focus-visible, select:focus-visible, textarea:focus-visible, input:focus-visible{
+  outline:2px solid var(--signal); outline-offset:1px;
+}
+button.primary{border-color:#2f5f8c; color:#bcdcfa; background:#1c2c3c}
+button.primary:hover{background:#23384c; color:#e2f0ff}
+select{padding-right:6px}
+
+/* ---------- main ---------- */
+main{display:grid; grid-template-columns:minmax(280px,360px) minmax(0,1fr); min-height:0}
+
+/* ---------- left ---------- */
+.side{display:flex; flex-direction:column; min-height:0; border-right:1px solid var(--rule); background:var(--slate)}
+.side-head{
+  display:flex; align-items:center; justify-content:space-between; gap:8px;
+  padding:9px 12px; border-bottom:1px solid var(--rule);
+  font-size:11px; letter-spacing:.08em; color:var(--dim);
+}
+.editor-wrap{position:relative; display:flex; min-height:140px; flex:1 1 auto; overflow:hidden}
+.gutter{
+  padding:12px 6px 12px 10px; text-align:right; color:#4b5563; background:var(--graphite);
+  font-size:12px; line-height:19px; user-select:none; overflow:hidden; border-right:1px solid var(--rule);
+  white-space:pre;
+  min-width:38px;
+}
+textarea#src{
+  flex:1; resize:none; border:0; outline:none; padding:12px 12px 12px 10px;
+  background:var(--graphite); color:#d3dae2; caret-color:var(--signal);
+  font-family:var(--mono); font-size:12.5px; line-height:19px; tab-size:2;
+  overflow:auto; white-space:pre; scrollbar-width:thin;
+}
+.errbar{
+  padding:7px 12px; font-size:11.5px; color:#f0b4b4; background:#2a1c1c;
+  border-top:1px solid #4a2a2a; display:none; white-space:pre-wrap;
+}
+.errbar.on{display:block}
+
+.controls{border-top:1px solid var(--rule); overflow-y:auto; flex:0 0 auto; max-height:46%}
+.grp{padding:10px 12px; border-bottom:1px solid var(--rule)}
+.grp h4{margin:0 0 8px; font-size:10.5px; letter-spacing:.1em; color:var(--dim); font-weight:500}
+.row{display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:7px}
+.row:last-child{margin-bottom:0}
+.row label{font-size:12px; color:var(--mid); flex:0 0 auto}
+.row select, .row input[type=number]{flex:1 1 auto; min-width:0; max-width:190px}
+.row input[type=number]{max-width:82px; cursor:text}
+input[type=range]{flex:1; accent-color:var(--signal); min-width:0}
+.val{font-size:11.5px; color:var(--trace); min-width:34px; text-align:right}
+.check{display:flex; align-items:center; gap:8px; cursor:pointer; font-size:12px; color:var(--mid)}
+.check input{accent-color:var(--signal); cursor:pointer; margin:0}
+.hint{font-size:11px; color:var(--dim); line-height:1.55; margin:8px 0 0}
+.hint code{color:var(--mid); background:var(--panel); padding:1px 4px; border-radius:3px; font-size:10.5px}
+
+/* ---------- canvas ---------- */
+.stage{display:flex; flex-direction:column; min-width:0; min-height:320px; background:var(--graphite)}
+.panes{flex:1; display:flex; min-height:0}
+.pane{flex:1; min-width:0; position:relative; display:flex; flex-direction:column}
+.pane + .pane{border-left:1px solid var(--rule)}
+.pane-tag{
+  position:absolute; top:8px; left:8px; z-index:3; pointer-events:none;
+  font-size:10px; letter-spacing:.08em; color:#5c6672;
+  background:rgba(244,242,237,.86); border:1px solid #d9d5cb; border-radius:3px; padding:2px 7px;
+}
+#compare{display:none}
+#compare.on{display:flex}
+#cmpview{
+  flex:1; min-height:0; overflow:hidden; background:var(--vellum); position:relative;
+  background-image:radial-gradient(#d6d2c8 1px, transparent 1px); background-size:22px 22px;
+}
+#cmpview svg{width:100%; height:100%; display:block}
+.cmp-msg{
+  position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+  text-align:center; padding:24px; color:#6a7480; font-size:12px; line-height:1.7;
+}
+.cmp-msg b{color:#3f4650; font-weight:500; display:block; margin-bottom:6px}
+.effect{
+  font-size:10.5px; color:var(--trace); margin:-2px 0 8px; line-height:1.5;
+  padding-left:1px; min-height:15px;
+}
+.nochange{color:var(--dim)}
+.stage-head{
+  display:flex; align-items:center; gap:10px; padding:8px 12px;
+  border-bottom:1px solid var(--rule); font-size:11px; color:var(--dim);
+}
+.stage-head .spacer{flex:1}
+.zoombtn{padding:4px 9px; font-size:11px}
+#canvas{
+  flex:1; min-height:240px; overflow:hidden; position:relative;
+  background:var(--vellum); cursor:grab;
+  background-image:radial-gradient(#d6d2c8 1px, transparent 1px);
+  background-size:22px 22px;
+}
+#canvas.drag{cursor:grabbing}
+#canvas svg{position:absolute; top:0; left:0; width:100%; height:100%}
+.fl-node, .fl-edge{transition:transform .28s cubic-bezier(.4,0,.2,1), opacity .16s linear}
+.fl-node:hover > :first-child{stroke-width:2.4}
+
+/* ---------- readout: the instrument strip ---------- */
+.readout{
+  display:flex; align-items:stretch; gap:0; border-top:1px solid var(--rule);
+  background:var(--slate); overflow-x:auto; scrollbar-width:thin;
+}
+.metric{
+  padding:8px 14px; border-right:1px solid var(--rule); min-width:88px; flex:0 0 auto;
+}
+.metric .k{font-size:10px; letter-spacing:.09em; color:var(--dim); display:block}
+.metric .v{font-size:16px; color:var(--bright); font-weight:500; letter-spacing:-.01em}
+.metric .d{font-size:10.5px; margin-left:5px; opacity:0; transition:opacity .3s}
+.metric .d.on{opacity:1}
+.d.up{color:var(--bad)} .d.down{color:var(--good)} .d.flat{color:var(--dim)}
+.metric.lead{border-left:2px solid var(--signal)}
+
+@media (max-width:880px){
+  main{grid-template-columns:1fr; grid-template-rows:minmax(200px,40%) minmax(0,1fr)}
+  .side{border-right:0; border-bottom:1px solid var(--rule)}
+  .controls{max-height:none}
+  header{height:auto; flex-wrap:wrap; padding:10px 12px; gap:10px}
+}
+@media (prefers-reduced-motion:reduce){
+  .fl-node,.fl-edge,.metric .d{transition:none}
+}
+</style>
+</head>
+<body>
+
+<header>
+  <span class="mark">
+    <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
+      <rect x="6" y="1" width="6" height="4" fill="none" stroke="#4d9fe8" stroke-width="1.3"/>
+      <rect x="1" y="13" width="6" height="4" fill="none" stroke="#78828e" stroke-width="1.3"/>
+      <rect x="11" y="13" width="6" height="4" fill="none" stroke="#78828e" stroke-width="1.3"/>
+      <path d="M9 5v4H4v4M9 9h5v4" fill="none" stroke="#d99a2b" stroke-width="1.3"/>
+    </svg>
+    Flowchart Lab <small>· Sugiyama workbench</small>
+  </span>
+  <span class="spacer"></span>
+  <span class="exports">
+    <button id="ex-drawio" class="primary" title="Open directly in diagrams.net — shapes and routing preserved">.drawio</button>
+    <button id="ex-office" title="Flat SVG: insert in PowerPoint, then Convert to Shape">.svg for Office</button>
+    <button id="ex-svg" title="Styled SVG for the web">.svg</button>
+    <button id="ex-copy" title="Copy draw.io XML — paste via Extras &gt; Edit Diagram">copy xml</button>
+  </span>
+</header>
+
+<main>
+  <section class="side">
+    <div class="side-head">
+      <span>source</span>
+      <select id="preset" title="Load an example">
+        <option value="approval">approval flow</option>
+        <option value="chain">long chain (wrap demo)</option>
+        <option value="crossy">crossing stress</option>
+        <option value="state">retry state machine</option>
+        <option value="wide">wide fan</option>
+        <option value="incident">very long: incident response</option>
+      </select>
+    </div>
+    <div class="editor-wrap">
+      <div class="gutter" id="gutter">1</div>
+      <textarea id="src" spellcheck="false" aria-label="Flowchart source"></textarea>
+    </div>
+    <div class="errbar" id="err"></div>
+
+    <div class="controls">
+      <div class="grp">
+        <h4>pipeline</h4>
+        <div class="row">
+          <label for="layering">layering</label>
+          <select id="layering">
+            <option value="network-simplex">network simplex</option>
+            <option value="longest-path">longest path</option>
+            <option value="coffman-graham">coffman-graham</option>
+          </select>
+        </div>
+        <div class="row" id="cgrow" style="display:none">
+          <label for="cgw">max width</label>
+          <input type="number" id="cgw" min="1" max="12" value="4">
+        </div>
+        <div class="row">
+          <label class="check"><input type="checkbox" id="promote" checked> node promotion</label>
+        </div>
+        <div class="row">
+          <label for="iters">order passes</label>
+          <input type="range" id="iters" min="0" max="40" value="24">
+          <span class="val" id="itersv">24</span>
+        </div>
+        <p class="effect" id="fx-layering"></p>
+        <p class="effect" id="fx-iters"></p>
+      </div>
+
+      <div class="grp">
+        <h4>shape</h4>
+        <div class="row">
+          <label for="dir">direction</label>
+          <select id="dir">
+            <option value="">from source</option>
+            <option value="TB">top to bottom</option>
+            <option value="LR">left to right</option>
+            <option value="BT">bottom to top</option>
+            <option value="RL">right to left</option>
+          </select>
+        </div>
+        <div class="row">
+          <label for="routing">edge routing</label>
+          <select id="routing">
+            <option value="orthogonal">orthogonal</option>
+            <option value="polyline">polyline</option>
+            <option value="spline">spline</option>
+          </select>
+        </div>
+        <div class="row"><label for="nodeSep">node gap</label>
+          <input type="range" id="nodeSep" min="16" max="120" value="44"><span class="val" id="nodeSepv">44</span></div>
+        <div class="row"><label for="rankSep">rank gap</label>
+          <input type="range" id="rankSep" min="24" max="160" value="56"><span class="val" id="rankSepv">56</span></div>
+        <p class="effect" id="fx-routing"></p>
+      </div>
+
+      <div class="grp">
+        <h4>wrapping</h4>
+        <div class="row">
+          <label class="check"><input type="checkbox" id="wrap"> cut and stack</label>
+        </div>
+        <div class="row">
+          <label for="ar">target ratio</label>
+          <input type="range" id="ar" min="0.4" max="4" step="0.1" value="1.6">
+          <span class="val" id="arv">1.6</span>
+        </div>
+        <p class="effect" id="fx-wrap"></p>
+      </div>
+    </div>
+  </section>
+
+  <section class="stage">
+    <div class="stage-head">
+      <label for="engine" style="color:var(--dim)">compare with</label>
+      <select id="engine" style="font-size:11px; padding:3px 6px">
+        <option value="none">nothing</option>
+        <option value="mermaid">mermaid (dagre)</option>
+        <option value="mermaid-elk">mermaid (ELK)</option>
+      </select>
+      <span id="cmpstat" style="color:var(--dim)"></span>
+      <span class="spacer"></span>
+      <span id="zoomlabel">100%</span>
+      <button class="zoombtn" id="zin">+</button>
+      <button class="zoombtn" id="zout">−</button>
+      <button class="zoombtn" id="zfit">fit</button>
+    </div>
+    <div class="panes">
+      <div class="pane">
+        <span class="pane-tag" id="tag-a">this engine</span>
+        <div id="canvas" tabindex="0" role="img" aria-label="Rendered flowchart"></div>
+      </div>
+      <div class="pane" id="compare">
+        <span class="pane-tag" id="tag-b">mermaid</span>
+        <div id="cmpview"></div>
+      </div>
+    </div>
+    <div class="readout" id="readout"></div>
+  </section>
+</main>
+
+
+<script>/* engine.js */
+/* flowchart layout engine
+   Sugiyama pipeline:
+     1 cycle breaking      greedy FAS (Eades, Lin, Smyth 1993)
+     2 layering            longest-path | Coffman-Graham | network simplex (GKNV 1993)
+                           + optional node promotion (Nikolov & Tarassov 2006)
+     3 ordering            weighted median (GKNV) + transpose, scored with
+                           accumulator-tree crossing counting (Barth, Junger, Mutzel 2002)
+     4 x-coordinates       Brandes & Kopf 2002, size-aware delta
+     5 wrapping            cut-and-stack for aspect ratio (after Ruegg et al.)
+     6 routing             polyline | orthogonal | spline
+*/
+(function (root, factory) {
+  if (typeof module === 'object' && module.exports) module.exports = factory();
+  else root.FlowLayout = factory();
+})(typeof self !== 'undefined' ? self : this, function () {
+  'use strict';
+
+  /* ------------------------------------------------------------------ *
+   * text measurement (injectable; browser overrides with canvas)
+   * ------------------------------------------------------------------ */
+  var measure = function (text, size, weight) {
+    var w = 0;
+    for (var i = 0; i < text.length; i++) {
+      var c = text.charCodeAt(i);
+      if (c >= 0x3000) w += 1.0;
+      else if ('iljtfrI.,:;\'!|'.indexOf(text[i]) >= 0) w += 0.32;
+      else if ('mwMW@'.indexOf(text[i]) >= 0) w += 0.92;
+      else if (text[i] === text[i].toUpperCase() && /[A-Z]/.test(text[i])) w += 0.68;
+      else w += 0.55;
+    }
+    return w * size * (weight >= 500 ? 1.04 : 1);
+  };
+  function setMeasurer(fn) { measure = fn; }
+
+  /* ------------------------------------------------------------------ *
+   * 0. parser  (mermaid-flavoured subset)
+   * ------------------------------------------------------------------ */
+  var SHAPES = [
+    [/^\(\((.*)\)\)$/, 'circle'],
+    [/^\(\[(.*)\]\)$/, 'stadium'],
+    [/^\[\((.*)\)\]$/, 'cylinder'],
+    [/^\{\{(.*)\}\}$/, 'hexagon'],
+    [/^\[\/(.*)\/\]$/, 'parallelogram'],
+    [/^\[\\(.*)\\\]$/, 'parallelogram'],
+    [/^\{(.*)\}$/, 'diamond'],
+    [/^\((.*)\)$/, 'round'],
+    [/^\[(.*)\]$/, 'rect']
+  ];
+  /* A link is any run of dashes, equals or dots, optionally opened with `<` and closed
+     with an arrowhead.  Mermaid lets you pad a link to make it span more ranks, so
+     `-->`, `--->` and `----->` are the same link; matching a fixed set of three-character
+     tokens silently dropped every padded edge. */
+  var LINK_SRC = '<?(?:-\\.{1,3}-|\\.-|-\\.|-{2,}|={2,})[->ox]?';
+  var EDGE_RE = new RegExp('(' + LINK_SRC + ')(?:\\s*\\|[^|]*\\|)?');
+  /* the second label form: `A -- text --> B`.  Only a bare two-character opener starts
+     one, which is what keeps `A --- B --- C` a pair of links rather than a label. */
+  var INLINE_RE = new RegExp('^(\\s*)([^|]*?)\\s*(' + LINK_SRC + ')');
+
+  function linkStyle(link) {
+    if (link.indexOf('.') >= 0) return 'dashed';
+    if (link.indexOf('=') >= 0) return 'thick';
+    return 'solid';
+  }
+  function linkArrow(link) {
+    return '>ox'.indexOf(link.charAt(link.length - 1)) >= 0 ? 'normal' : 'none';
+  }
+
+  /* Everything inside a node's brackets or quotes is label text, so a label reading
+     "retry --> give up" must not be mistaken for a link.  Blank those spans out, match
+     against the blanked copy, and slice the original by the index it reports.  The mask
+     is the same length as the line so the indices line up. */
+  function maskLabels(line) {
+    var out = line.split(''), depth = 0, quote = null;
+    for (var i = 0; i < out.length; i++) {
+      var c = out[i];
+      if (quote) { if (c === quote) quote = null; out[i] = ' '; continue; }
+      if (depth > 0 && (c === '"' || c === "'")) { quote = c; out[i] = ' '; continue; }
+      if (c === '[' || c === '(' || c === '{') { depth++; continue; }
+      if (c === ']' || c === ')' || c === '}') { if (depth > 0) depth--; continue; }
+      if (depth > 0) out[i] = ' ';
+    }
+    return out.join('');
+  }
+
+  function parseNodeRef(raw, nodes, order) {
+    var s = raw.trim();
+    if (!s) return null;
+    var m = s.match(/^([A-Za-z0-9_.\u00c0-\uffff-]+)([\s\S]*)$/);
+    if (!m) return null;
+    var id = m[1], rest = m[2].trim(), shape = null, label = null;
+    if (rest) {
+      for (var i = 0; i < SHAPES.length; i++) {
+        var mm = rest.match(SHAPES[i][0]);
+        if (mm) { shape = SHAPES[i][1]; label = mm[1]; break; }
+      }
+      if (!shape) { shape = 'rect'; label = rest; }
+    }
+    if (!nodes[id]) { nodes[id] = { id: id, label: id, shape: 'rect' }; order.push(id); }
+    if (label !== null) {
+      nodes[id].label = label.replace(/^["']|["']$/g, '').replace(/<br\s*\/?>/gi, '\n');
+      nodes[id].shape = shape;
+    }
+    return id;
+  }
+
+  function parseLine(line, lineNo, nodes, order, edges, errors) {
+    var mask = maskLabels(line);
+    var cursor = 0, prev = null, guard = 0;
+    while (guard++ < 200) {
+      var m = mask.slice(cursor).match(EDGE_RE);
+      if (!m) {
+        var tail = line.slice(cursor);
+        if (tail.trim() && !parseNodeRef(tail, nodes, order)) {
+          errors.push('line ' + lineNo + ': cannot read "' + tail.trim() + '"');
+        }
+        return;
+      }
+      var linkAt = cursor + m.index;
+      var from = parseNodeRef(line.slice(cursor, linkAt), nodes, order) || prev;
+      cursor = linkAt + m[0].length;
+
+      var whole = line.substr(linkAt, m[0].length);
+      var link = line.substr(linkAt, m[1].length);
+      var piped = whole.match(/\|([^|]*)\|\s*$/);
+      var label = piped ? piped[1].trim() : '';
+
+      if (!label && /^(--|==|-\.)$/.test(link)) {
+        var inline = mask.slice(cursor).match(INLINE_RE);
+        if (inline) {
+          label = line.substr(cursor + inline[1].length, inline[2].length).trim();
+          link = inline[3];
+          cursor += inline[0].length;
+        }
+      }
+
+      var nextM = mask.slice(cursor).match(EDGE_RE);
+      var rightEnd = nextM ? cursor + nextM.index : line.length;
+      var to = parseNodeRef(line.slice(cursor, rightEnd), nodes, order);
+
+      if (from && to) {
+        edges.push({
+          from: from, to: to,
+          label: label.replace(/^["']|["']$/g, ''),
+          style: linkStyle(link), arrow: linkArrow(link)
+        });
+      } else if (!from) {
+        errors.push('line ' + lineNo + ': link "' + link + '" has nothing on its left');
+      } else {
+        errors.push('line ' + lineNo + ': link from "' + from + '" has no target');
+      }
+
+      prev = to;
+      if (!nextM) return;
+    }
+  }
+
+  function parse(src) {
+    var nodes = {}, order = [], edges = [], dir = 'TB', errors = [];
+    var lines = String(src).split(/\r?\n/);
+    for (var li = 0; li < lines.length; li++) {
+      var line = lines[li].replace(/%%.*$/, '').trim();
+      if (!line) continue;
+      var h = line.match(/^(?:flowchart|graph)\s+(TB|TD|BT|LR|RL)\s*$/i);
+      if (h) { dir = h[1].toUpperCase() === 'TD' ? 'TB' : h[1].toUpperCase(); continue; }
+      if (/^(subgraph|end|click|style|classDef|class|linkStyle)\b/i.test(line)) continue;
+
+      parseLine(line, li + 1, nodes, order, edges, errors);
+    }
+    return {
+      nodes: order.map(function (id) { return nodes[id]; }),
+      edges: edges, dir: dir, errors: errors
+    };
+  }
+
+  /* ------------------------------------------------------------------ *
+   * node sizing
+   * ------------------------------------------------------------------ */
+  function sizeNodes(nodes, o) {
+    nodes.forEach(function (n) {
+      var lines = String(n.label).split('\n');
+      var tw = 0;
+      lines.forEach(function (l) { tw = Math.max(tw, measure(l, o.fontSize, 500)); });
+      var th = lines.length * o.fontSize * 1.35;
+      var padX = o.padX, padY = o.padY;
+      if (n.shape === 'diamond') { padX = o.padX * 2.4; padY = o.padY * 1.9; }
+      if (n.shape === 'circle') { padX = o.padX * 1.5; padY = o.padY * 1.5; }
+      if (n.shape === 'hexagon' || n.shape === 'parallelogram') padX = o.padX * 1.8;
+      if (n.shape === 'cylinder') padY = o.padY * 1.6;
+      n.w = Math.max(o.minW, Math.round(tw + padX * 2));
+      n.h = Math.max(o.minH, Math.round(th + padY * 2));
+      if (n.shape === 'circle') { var d = Math.max(n.w, n.h); n.w = d; n.h = d; }
+      n.textDy = 0;
+      if (n.shape === 'cylinder') {
+        // the top cap dips to y+2e at the horizontal centre, which is exactly where the
+        // label sits.  Reserve that depth and push the text below it.
+        var cap = Math.min(12, n.h / 4);
+        n.h += cap;
+        n.textDy = cap;
+      }
+      n.lines = lines;
+    });
+  }
+
+  /* ------------------------------------------------------------------ *
+   * 1. cycle breaking - greedy feedback arc set (Eades/Lin/Smyth)
+   * ------------------------------------------------------------------ */
+  function greedyFAS(ids, edges) {
+    var alive = {}, out = {}, inn = {};
+    ids.forEach(function (id) { alive[id] = true; out[id] = []; inn[id] = []; });
+    edges.forEach(function (e, i) {
+      if (e.from === e.to) return;
+      out[e.from].push(i); inn[e.to].push(i);
+    });
+    var outDeg = {}, inDeg = {};
+    ids.forEach(function (id) { outDeg[id] = out[id].length; inDeg[id] = inn[id].length; });
+
+    var removed = {}, s1 = [], s2 = [], left = ids.length;
+    function drop(v) {
+      alive[v] = false; removed[v] = true; left--;
+      out[v].forEach(function (i) { if (alive[edges[i].to]) inDeg[edges[i].to]--; });
+      inn[v].forEach(function (i) { if (alive[edges[i].from]) outDeg[edges[i].from]--; });
+    }
+    var guard = 0;
+    while (left > 0 && guard++ < ids.length * 4 + 16) {
+      var moved = true;
+      while (moved) {
+        moved = false;
+        for (var i = 0; i < ids.length; i++) {
+          var v = ids[i];
+          if (alive[v] && outDeg[v] === 0) { s2.unshift(v); drop(v); moved = true; }
+        }
+      }
+      moved = true;
+      while (moved) {
+        moved = false;
+        for (var j = 0; j < ids.length; j++) {
+          var u = ids[j];
+          if (alive[u] && inDeg[u] === 0) { s1.push(u); drop(u); moved = true; }
+        }
+      }
+      if (left > 0) {
+        var best = null, bestD = -Infinity;
+        for (var k = 0; k < ids.length; k++) {
+          var w = ids[k];
+          if (!alive[w]) continue;
+          var d = outDeg[w] - inDeg[w];
+          if (d > bestD) { bestD = d; best = w; }
+        }
+        if (best === null) break;
+        s1.push(best); drop(best);
+      }
+    }
+    ids.forEach(function (id) { if (!removed[id]) s1.push(id); });
+
+    var pos = {};
+    s1.concat(s2).forEach(function (id, i) { pos[id] = i; });
+    var reversed = [];
+    edges.forEach(function (e, i) {
+      if (e.from === e.to) { e.selfLoop = true; return; }
+      if (pos[e.from] > pos[e.to]) { e.reversed = true; reversed.push(i); }
+      else e.reversed = false;
+    });
+    return reversed;
+  }
+
+  /* ------------------------------------------------------------------ *
+   * 2. layering
+   * ------------------------------------------------------------------ */
+  function buildDag(ids, edges) {
+    var succ = {}, pred = {};
+    ids.forEach(function (id) { succ[id] = []; pred[id] = []; });
+    edges.forEach(function (e) {
+      if (e.selfLoop) return;
+      var a = e.reversed ? e.to : e.from, b = e.reversed ? e.from : e.to;
+      succ[a].push(b); pred[b].push(a);
+    });
+    return { succ: succ, pred: pred };
+  }
+
+  function topoOrder(ids, dag) {
+    var indeg = {}, q = [], out = [];
+    ids.forEach(function (id) { indeg[id] = dag.pred[id].length; if (!indeg[id]) q.push(id); });
+    while (q.length) {
+      var v = q.shift(); out.push(v);
+      dag.succ[v].forEach(function (w) { if (--indeg[w] === 0) q.push(w); });
+    }
+    ids.forEach(function (id) { if (out.indexOf(id) < 0) out.push(id); });
+    return out;
+  }
+
+  function longestPath(ids, dag) {
+    var layer = {}, order = topoOrder(ids, dag);
+    order.forEach(function (v) {
+      var m = 0;
+      dag.pred[v].forEach(function (u) { m = Math.max(m, (layer[u] || 0) + 1); });
+      layer[v] = m;
+    });
+    return layer;
+  }
+
+  function coffmanGraham(ids, dag, W) {
+    var n = ids.length, label = {}, labelled = {}, count = 0;
+    while (count < n) {
+      var cand = null, candKey = null;
+      for (var i = 0; i < n; i++) {
+        var v = ids[i];
+        if (labelled[v]) continue;
+        var ok = dag.pred[v].every(function (u) { return labelled[u]; });
+        if (!ok) continue;
+        var key = dag.pred[v].map(function (u) { return label[u]; }).sort(function (a, b) { return b - a; });
+        if (cand === null || lexLess(key, candKey)) { cand = v; candKey = key; }
+      }
+      if (cand === null) { for (var j = 0; j < n; j++) if (!labelled[ids[j]]) { cand = ids[j]; break; } }
+      labelled[cand] = true; label[cand] = ++count;
+    }
+    function lexLess(a, b) {
+      for (var i = 0; i < Math.max(a.length, b.length); i++) {
+        var x = a[i] === undefined ? -1 : a[i], y = b[i] === undefined ? -1 : b[i];
+        if (x !== y) return x < y;
+      }
+      return false;
+    }
+    var byLabelDesc = ids.slice().sort(function (a, b) { return label[b] - label[a]; });
+    var lvl = {}, k = 0, size = 0;
+    byLabelDesc.forEach(function (v) {
+      var ready = dag.succ[v].every(function (w) { return lvl[w] !== undefined && lvl[w] < k; });
+      if (size >= W || !ready) {
+        var need = 0;
+        dag.succ[v].forEach(function (w) { if (lvl[w] !== undefined) need = Math.max(need, lvl[w] + 1); });
+        k = Math.max(k + 1, need); size = 0;
+      }
+      lvl[v] = k; size++;
+    });
+    var maxK = 0; ids.forEach(function (v) { maxK = Math.max(maxK, lvl[v]); });
+    var layer = {}; ids.forEach(function (v) { layer[v] = maxK - lvl[v]; });
+    return layer;
+  }
+
+  /* network simplex (Gansner, Koutsofios, North, Vo 1993) */
+  function networkSimplex(ids, dag, edgeList, maxIter) {
+    if (!edgeList.length) { var z = {}; ids.forEach(function (i) { z[i] = 0; }); return z; }
+    var rank = longestPath(ids, dag);
+    var E = edgeList.map(function (e, i) { return { i: i, t: e.t, h: e.h, w: 1, minlen: 1 }; });
+    function slack(e) { return rank[e.h] - rank[e.t] - e.minlen; }
+
+    var tree = {}, inTree = {};
+    function tightTree() {
+      var nodes = {}, count = 0, stack = [ids[0]];
+      nodes[ids[0]] = true; count = 1;
+      var adj = {}; ids.forEach(function (v) { adj[v] = []; });
+      E.forEach(function (e) { adj[e.t].push(e); adj[e.h].push(e); });
+      var treeEdges = [];
+      while (stack.length) {
+        var v = stack.pop();
+        adj[v].forEach(function (e) {
+          if (slack(e) !== 0) return;
+          var o = e.t === v ? e.h : e.t;
+          if (nodes[o]) return;
+          nodes[o] = true; count++; treeEdges.push(e); stack.push(o);
+        });
+      }
+      return { nodes: nodes, count: count, edges: treeEdges };
+    }
+
+    var tt = tightTree(), guard = 0;
+    while (tt.count < ids.length && guard++ < ids.length * 4 + 20) {
+      var best = null, bestSlack = Infinity, incidentIsTail = false;
+      E.forEach(function (e) {
+        var a = tt.nodes[e.t], b = tt.nodes[e.h];
+        if (a === b) return;
+        var s = slack(e);
+        if (s < bestSlack) { bestSlack = s; best = e; incidentIsTail = a; }
+      });
+      if (!best) break;
+      var delta = incidentIsTail ? bestSlack : -bestSlack;
+      ids.forEach(function (v) { if (tt.nodes[v]) rank[v] += delta; });
+      tt = tightTree();
+    }
+
+    var treeEdges = tt.edges.slice();
+    function components(exclude) {
+      var side = {}, adj = {};
+      ids.forEach(function (v) { adj[v] = []; });
+      treeEdges.forEach(function (e) { if (e === exclude) return; adj[e.t].push(e.h); adj[e.h].push(e.t); });
+      var stack = [exclude.t]; side[exclude.t] = 1;
+      while (stack.length) {
+        var v = stack.pop();
+        adj[v].forEach(function (o) { if (!side[o]) { side[o] = 1; stack.push(o); } });
+      }
+      return side;
+    }
+    function cutValue(e) {
+      var tailSide = components(e), cv = 0;
+      E.forEach(function (f) {
+        var ft = !!tailSide[f.t], fh = !!tailSide[f.h];
+        if (ft === fh) return;
+        cv += ft ? f.w : -f.w;
+      });
+      return cv;
+    }
+
+    var iter = 0;
+    while (iter++ < (maxIter || 60)) {
+      var leave = null;
+      for (var i = 0; i < treeEdges.length; i++) {
+        if (cutValue(treeEdges[i]) < 0) { leave = treeEdges[i]; break; }
+      }
+      if (!leave) break;
+      var tailSide = components(leave), enter = null, es = Infinity;
+      E.forEach(function (f) {
+        if (f === leave) return;
+        if (!tailSide[f.t] && tailSide[f.h]) {
+          var s = slack(f);
+          if (s < es) { es = s; enter = f; }
+        }
+      });
+      if (!enter) break;
+      treeEdges.splice(treeEdges.indexOf(leave), 1);
+      treeEdges.push(enter);
+      // re-tighten ranks from the new tree
+      var adj = {}; ids.forEach(function (v) { adj[v] = []; });
+      treeEdges.forEach(function (e) { adj[e.t].push({ o: e.h, d: e.minlen }); adj[e.h].push({ o: e.t, d: -e.minlen }); });
+      var seen = {}, st = [ids[0]]; rank[ids[0]] = 0; seen[ids[0]] = true;
+      while (st.length) {
+        var v = st.pop();
+        adj[v].forEach(function (a) { if (!seen[a.o]) { seen[a.o] = true; rank[a.o] = rank[v] + a.d; st.push(a.o); } });
+      }
+      ids.forEach(function (v) { if (!seen[v]) rank[v] = rank[v] || 0; });
+    }
+    var min = Infinity; ids.forEach(function (v) { min = Math.min(min, rank[v]); });
+    ids.forEach(function (v) { rank[v] -= min; });
+    // repair any constraint the re-tighten broke
+    var ord = topoOrder(ids, dag);
+    ord.forEach(function (v) {
+      dag.pred[v].forEach(function (u) { if (rank[v] <= rank[u]) rank[v] = rank[u] + 1; });
+    });
+    return rank;
+  }
+
+  /* node promotion (Nikolov & Tarassov 2006) - fewer dummies */
+  function promote(ids, dag, layer) {
+    function promoteVertex(v, lay, depth) {
+      if (depth > ids.length) return 1e9;
+      var diff = 0;
+      dag.pred[v].forEach(function (u) {
+        if (lay[u] === lay[v] - 1) diff += promoteVertex(u, lay, depth + 1);
+      });
+      lay[v] = lay[v] - 1;
+      return diff - dag.pred[v].length + dag.succ[v].length;
+    }
+    var changed = true, rounds = 0;
+    while (changed && rounds++ < 8) {
+      changed = false;
+      for (var i = 0; i < ids.length; i++) {
+        var v = ids[i];
+        if (!dag.pred[v].length) continue;
+        var backup = {}; ids.forEach(function (n) { backup[n] = layer[n]; });
+        if (promoteVertex(v, layer, 0) < 0) changed = true;
+        else ids.forEach(function (n) { layer[n] = backup[n]; });
+      }
+    }
+    var min = Infinity; ids.forEach(function (v) { min = Math.min(min, layer[v]); });
+    ids.forEach(function (v) { layer[v] -= min; });
+    return layer;
+  }
+
+  /* ------------------------------------------------------------------ *
+   * 3. ordering
+   * ------------------------------------------------------------------ */
+  function countCrossingsBetween(north, south, adjDown, posSouth) {
+    var pairs = [];
+    north.forEach(function (v, i) {
+      (adjDown[v] || []).forEach(function (w) {
+        if (posSouth[w] === undefined) return;
+        pairs.push([i, posSouth[w]]);
+      });
+    });
+    pairs.sort(function (a, b) { return a[0] - b[0] || a[1] - b[1]; });
+    var first = 1;
+    while (first < south.length) first *= 2;
+    var treeSize = 2 * first - 1;
+    first -= 1;
+    var tree = new Array(treeSize).fill(0), cross = 0;
+    pairs.forEach(function (p) {
+      var index = p[1] + first;
+      tree[index]++;
+      while (index > 0) {
+        if (index % 2) cross += tree[index + 1];
+        index = (index - 1) >> 1;
+        tree[index]++;
+      }
+    });
+    return cross;
+  }
+
+  function totalCrossings(layers, adjDown) {
+    var total = 0;
+    for (var i = 0; i + 1 < layers.length; i++) {
+      var posS = {};
+      layers[i + 1].forEach(function (v, j) { posS[v] = j; });
+      total += countCrossingsBetween(layers[i], layers[i + 1], adjDown, posS);
+    }
+    return total;
+  }
+
+  function medianValue(positions) {
+    var P = positions.slice().sort(function (a, b) { return a - b; });
+    var m = Math.floor(P.length / 2);
+    if (P.length === 0) return -1;
+    if (P.length % 2 === 1) return P[m];
+    if (P.length === 2) return (P[0] + P[1]) / 2;
+    var left = P[m - 1] - P[0], right = P[P.length - 1] - P[m];
+    if (left + right === 0) return (P[m - 1] + P[m]) / 2;
+    return (P[m - 1] * right + P[m] * left) / (left + right);
+  }
+
+  function ordering(layers, adjUp, adjDown, iters) {
+    var best = layers.map(function (l) { return l.slice(); });
+    var bestCross = totalCrossings(best, adjDown);
+    var cur = layers.map(function (l) { return l.slice(); });
+
+    for (var it = 0; it < iters; it++) {
+      var down = it % 2 === 0;
+      var range = [];
+      for (var i = 0; i < cur.length; i++) range.push(i);
+      if (!down) range.reverse();
+      range.forEach(function (i) {
+        var fixedIdx = down ? i - 1 : i + 1;
+        if (fixedIdx < 0 || fixedIdx >= cur.length) return;
+        var posFixed = {};
+        cur[fixedIdx].forEach(function (v, j) { posFixed[v] = j; });
+        var adj = down ? adjUp : adjDown;
+        var meds = cur[i].map(function (v, idx) {
+          var ps = (adj[v] || []).map(function (u) { return posFixed[u]; })
+            .filter(function (p) { return p !== undefined; });
+          return { v: v, m: medianValue(ps), idx: idx };
+        });
+        meds.sort(function (a, b) {
+          var am = a.m < 0 ? a.idx : a.m, bm = b.m < 0 ? b.idx : b.m;
+          return am - bm || a.idx - b.idx;
+        });
+        cur[i] = meds.map(function (x) { return x.v; });
+      });
+      transpose(cur, adjUp, adjDown);
+      var c = totalCrossings(cur, adjDown);
+      if (c < bestCross) { bestCross = c; best = cur.map(function (l) { return l.slice(); }); }
+      if (bestCross === 0) break;
+    }
+    return { layers: best, crossings: bestCross };
+  }
+
+  function transpose(layers, adjUp, adjDown) {
+    var improved = true, guard = 0;
+    while (improved && guard++ < 24) {
+      improved = false;
+      for (var r = 0; r < layers.length; r++) {
+        var L = layers[r];
+        for (var i = 0; i + 1 < L.length; i++) {
+          var v = L[i], w = L[i + 1];
+          if (pairCross(v, w, r, layers, adjUp, adjDown) >
+              pairCross(w, v, r, layers, adjUp, adjDown)) {
+            L[i] = w; L[i + 1] = v; improved = true;
+          }
+        }
+      }
+    }
+  }
+
+  function pairCross(v, w, r, layers, adjUp, adjDown) {
+    var c = 0;
+    [[adjUp, r - 1], [adjDown, r + 1]].forEach(function (pair) {
+      var adj = pair[0], idx = pair[1];
+      if (idx < 0 || idx >= layers.length) return;
+      var pos = {};
+      layers[idx].forEach(function (u, j) { pos[u] = j; });
+      var pv = (adj[v] || []).map(function (u) { return pos[u]; }).filter(function (x) { return x !== undefined; });
+      var pw = (adj[w] || []).map(function (u) { return pos[u]; }).filter(function (x) { return x !== undefined; });
+      pv.forEach(function (a) { pw.forEach(function (b) { if (a > b) c++; }); });
+    });
+    return c;
+  }
+
+  /* ------------------------------------------------------------------ *
+   * 4. x-coordinates - Brandes & Kopf
+   * ------------------------------------------------------------------ */
+  function markConflicts(layers, adjUp, isInner) {
+    var marked = {};
+    function key(u, v) { return u + '\u0000' + v; }
+    for (var i = 1; i + 1 < layers.length; i++) {
+      var k0 = 0, l = 0, cur = layers[i + 1], prev = layers[i];
+      var posPrev = {};
+      prev.forEach(function (v, j) { posPrev[v] = j; });
+      for (var l1 = 0; l1 < cur.length; l1++) {
+        var v = cur[l1];
+        var innerUp = null;
+        (adjUp[v] || []).forEach(function (u) { if (isInner(u, v)) innerUp = u; });
+        if (l1 === cur.length - 1 || innerUp !== null) {
+          var k1 = prev.length - 1;
+          if (innerUp !== null) k1 = posPrev[innerUp];
+          for (; l <= l1; l++) {
+            var vl = cur[l];
+            (adjUp[vl] || []).forEach(function (u) {
+              var k = posPrev[u];
+              if (k === undefined) return;
+              if (k < k0 || k > k1) marked[key(u, vl)] = true;
+            });
+          }
+          k0 = k1;
+        }
+      }
+    }
+    return marked;
+  }
+
+  function bkPass(layersIn, adj, marked, sep, down, left) {
+    var layers = layersIn.map(function (l) { return l.slice(); });
+    if (!down) layers.reverse();
+    if (!left) layers.forEach(function (l) { l.reverse(); });
+
+    var pos = {}, layerOf = {};
+    layers.forEach(function (L, i) { L.forEach(function (v, j) { pos[v] = j; layerOf[v] = i; }); });
+
+    function upper(v) {
+      var i = layerOf[v];
+      if (i === 0) return [];
+      var set = {};
+      layers[i - 1].forEach(function (u) { set[u] = true; });
+      return (adj[v] || []).filter(function (u) { return set[u]; })
+        .sort(function (a, b) { return pos[a] - pos[b]; });
+    }
+
+    var root = {}, align = {}, sink = {}, shift = {}, x = {};
+    layers.forEach(function (L) {
+      L.forEach(function (v) { root[v] = v; align[v] = v; sink[v] = v; shift[v] = Infinity; });
+    });
+
+    for (var i = 0; i < layers.length; i++) {
+      var r = -1;
+      for (var k = 0; k < layers[i].length; k++) {
+        var v = layers[i][k], N = upper(v);
+        if (!N.length) continue;
+        var mids = [Math.floor((N.length - 1) / 2), Math.ceil((N.length - 1) / 2)];
+        for (var mi = 0; mi < mids.length; mi++) {
+          if (align[v] !== v) continue;
+          var u = N[mids[mi]];
+          var conflict = marked[u + '\u0000' + v];  // conflicts are edge properties, flip-invariant
+          if (!conflict && r < pos[u]) {
+            align[u] = v; root[v] = root[u]; align[v] = root[v]; r = pos[u];
+          }
+        }
+      }
+    }
+
+    function placeBlock(v) {
+      if (x[v] !== undefined) return;
+      x[v] = 0;
+      var w = v, guard = 0;
+      do {
+        if (pos[w] > 0) {
+          var predNode = layers[layerOf[w]][pos[w] - 1];
+          var u = root[predNode];
+          placeBlock(u);
+          if (sink[v] === v) sink[v] = sink[u];
+          var d = sep(predNode, w);
+          if (sink[v] !== sink[u]) {
+            shift[sink[u]] = Math.min(shift[sink[u]], x[v] - x[u] - d);
+          } else {
+            x[v] = Math.max(x[v], x[u] + d);
+          }
+        }
+        w = align[w];
+      } while (w !== v && guard++ < 10000);
+    }
+
+    layers.forEach(function (L) { L.forEach(function (v) { if (root[v] === v) placeBlock(v); }); });
+    var out = {};
+    layers.forEach(function (L) {
+      L.forEach(function (v) {
+        out[v] = x[root[v]];
+        var s = shift[sink[root[v]]];
+        if (s < Infinity) out[v] += s;
+      });
+    });
+    if (!left) Object.keys(out).forEach(function (v) { out[v] = -out[v]; });
+    return out;
+  }
+
+  function brandesKopf(layers, adj, adjUp, isInner, sep) {
+    var marked = markConflicts(layers, adjUp, isInner);
+    var runs = [
+      bkPass(layers, adj, marked, sep, true, true),
+      bkPass(layers, adj, marked, sep, true, false),
+      bkPass(layers, adj, marked, sep, false, true),
+      bkPass(layers, adj, marked, sep, false, false)
+    ];
+    var all = [];
+    layers.forEach(function (L) { L.forEach(function (v) { all.push(v); }); });
+
+    var widths = runs.map(function (r) {
+      var lo = Infinity, hi = -Infinity;
+      all.forEach(function (v) { lo = Math.min(lo, r[v]); hi = Math.max(hi, r[v]); });
+      return { lo: lo, hi: hi, w: hi - lo };
+    });
+    var narrow = 0;
+    widths.forEach(function (w, i) { if (w.w < widths[narrow].w) narrow = i; });
+    runs.forEach(function (r, i) {
+      var d = (i === 0 || i === 2) ? widths[narrow].lo - widths[i].lo
+                                   : widths[narrow].hi - widths[i].hi;
+      if (d) all.forEach(function (v) { r[v] += d; });
+    });
+    var x = {};
+    all.forEach(function (v) {
+      var vals = runs.map(function (r) { return r[v]; }).sort(function (a, b) { return a - b; });
+      x[v] = (vals[1] + vals[2]) / 2;
+    });
+    return x;
+  }
+
+  /* ------------------------------------------------------------------ *
+   * 5. wrapping - cut and stack
+   * ------------------------------------------------------------------ */
+  function chooseCuts(layerCount, spanCount, k, freedom) {
+    if (k <= 1) return [];
+    var cuts = [];
+    for (var c = 1; c < k; c++) {
+      var nominal = Math.round(c * layerCount / k);
+      var best = nominal, bestScore = Infinity;
+      for (var d = -freedom; d <= freedom; d++) {
+        var idx = nominal + d;
+        if (idx <= 0 || idx >= layerCount) continue;
+        if (cuts.indexOf(idx) >= 0) continue;
+        var score = spanCount[idx] + Math.abs(d) * 0.35;
+        if (score < bestScore) { bestScore = score; best = idx; }
+      }
+      cuts.push(best);
+    }
+    return cuts.sort(function (a, b) { return a - b; });
+  }
+
+  /* ------------------------------------------------------------------ *
+   * main layout
+   * ------------------------------------------------------------------ */
+  var DEFAULTS = {
+    layering: 'network-simplex',   // longest-path | coffman-graham | network-simplex
+    promote: true,
+    cgWidth: 4,
+    orderIters: 24,
+    routing: 'orthogonal',         // orthogonal | polyline | spline
+    dir: null,                     // overrides parsed direction
+    nodeSep: 44,
+    edgeSep: 16,
+    rankSep: 56,
+    fontSize: 14,
+    edgeFontSize: 12,
+    padX: 14,
+    padY: 10,
+    minW: 54,
+    minH: 38,
+    wrap: false,
+    targetAR: 1.6,
+    wrapGap: 56,
+    cutFreedom: 2,
+    cornerRadius: 8
+  };
+
+  function layout(graph, opts) {
+    var t0 = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+    var o = {};
+    Object.keys(DEFAULTS).forEach(function (k) { o[k] = DEFAULTS[k]; });
+    if (opts) Object.keys(opts).forEach(function (k) { if (opts[k] !== undefined) o[k] = opts[k]; });
+
+    var nodes = graph.nodes.map(function (n) {
+      return { id: n.id, label: n.label, shape: n.shape };
+    });
+    var edges = graph.edges.map(function (e, i) {
+      return { id: 'e' + i, from: e.from, to: e.to, label: e.label || '', style: e.style, arrow: e.arrow };
+    });
+    var dir = o.dir || graph.dir || 'TB';
+
+    sizeNodes(nodes, o);
+
+    // LR/RL: lay out top-down on transposed boxes, then transpose back
+    var horizontal = (dir === 'LR' || dir === 'RL');
+    if (horizontal) nodes.forEach(function (n) { var t = n.w; n.w = n.h; n.h = t; });
+
+    var ids = nodes.map(function (n) { return n.id; });
+    if (!ids.length) {
+      return { nodes: [], edges: [], width: 0, height: 0, stats: emptyStats(t0) };
+    }
+
+    /* 1 - cycles */
+    greedyFAS(ids, edges);
+    var dag = buildDag(ids, edges);
+
+    /* 2 - layering */
+    var layer;
+    if (o.layering === 'longest-path') layer = longestPath(ids, dag);
+    else if (o.layering === 'coffman-graham') layer = coffmanGraham(ids, dag, Math.max(1, o.cgWidth));
+    else {
+      var nsEdges = [];
+      edges.forEach(function (e) {
+        if (e.selfLoop) return;
+        nsEdges.push({ t: e.reversed ? e.to : e.from, h: e.reversed ? e.from : e.to });
+      });
+      layer = networkSimplex(ids, dag, nsEdges, 80);
+    }
+    if (o.promote && o.layering !== 'coffman-graham') promote(ids, dag, layer);
+
+    var hasEdgeLabels = edges.some(function (e) { return e.label && !e.selfLoop; });
+    if (hasEdgeLabels) ids.forEach(function (v) { layer[v] *= 2; });
+    var rankStep = hasEdgeLabels ? o.rankSep / 2 : o.rankSep;
+
+    var maxLayer = 0;
+    ids.forEach(function (v) { maxLayer = Math.max(maxLayer, layer[v]); });
+
+    /* 3 - dummies */
+    var proper = {};   // id -> {w,h,dummy,edgeId,label}
+    nodes.forEach(function (n) { proper[n.id] = { w: n.w, h: n.h, dummy: false, real: n }; });
+    var layerOf = {};
+    ids.forEach(function (v) { layerOf[v] = layer[v]; });
+    var dummyCount = 0;
+
+    edges.forEach(function (e) {
+      if (e.selfLoop) { e.chain = null; return; }
+      var a = e.reversed ? e.to : e.from, b = e.reversed ? e.from : e.to;
+      var la = layer[a], lb = layer[b];
+      var chain = [a];
+      var labelRank = hasEdgeLabels && e.label ? la + Math.max(1, Math.floor((lb - la) / 2)) : -1;
+      for (var L = la + 1; L < lb; L++) {
+        var did = '\u0001d' + e.id + '_' + L;
+        var isLabel = (L === labelRank);
+        var lw = 1, lh = 1;
+        if (isLabel) {
+          lw = Math.max(10, measure(e.label, o.edgeFontSize, 400) + 10);
+          lh = o.edgeFontSize * 1.4;
+        }
+        proper[did] = { w: lw, h: lh, dummy: true, edgeId: e.id, isLabel: isLabel, labelText: isLabel ? e.label : '' };
+        layerOf[did] = L; chain.push(did); dummyCount++;
+      }
+      chain.push(b);
+      e.chain = chain;
+      e.flip = e.reversed;
+    });
+
+    /* proper-graph adjacency */
+    var adj = {}, adjUp = {}, adjDown = {};
+    Object.keys(proper).forEach(function (v) { adj[v] = []; adjUp[v] = []; adjDown[v] = []; });
+    var innerSeg = {};
+    edges.forEach(function (e) {
+      if (!e.chain) return;
+      for (var i = 0; i + 1 < e.chain.length; i++) {
+        var u = e.chain[i], v = e.chain[i + 1];
+        if (layerOf[u] === layerOf[v]) continue;
+        adjDown[u].push(v); adjUp[v].push(u);
+        adj[u].push(v); adj[v].push(u);
+        if (proper[u].dummy && proper[v].dummy) innerSeg[u + '\u0000' + v] = true;
+      }
+    });
+    function isInner(u, v) { return !!innerSeg[u + '\u0000' + v]; }
+
+    /* build layers, seeded by BFS for a decent starting order */
+    var layers = [];
+    for (var i = 0; i <= maxLayer; i++) layers.push([]);
+    var seen = {}, queue = ids.filter(function (v) { return !dag.pred[v].length; });
+    if (!queue.length) queue = [ids[0]];
+    var seedOrder = [];
+    while (queue.length) {
+      var v0 = queue.shift();
+      if (seen[v0]) continue;
+      seen[v0] = true; seedOrder.push(v0);
+      (dag.succ[v0] || []).forEach(function (w) { if (!seen[w]) queue.push(w); });
+    }
+    ids.forEach(function (v) { if (!seen[v]) seedOrder.push(v); });
+    var placed = {};
+    seedOrder.forEach(function (v) {
+      layers[layerOf[v]].push(v); placed[v] = true;
+      edges.forEach(function (e) {
+        if (!e.chain) return;
+        if (e.chain[0] !== v) return;
+        e.chain.forEach(function (c) {
+          if (!placed[c] && proper[c].dummy) { layers[layerOf[c]].push(c); placed[c] = true; }
+        });
+      });
+    });
+    Object.keys(proper).forEach(function (v) {
+      if (!placed[v]) { layers[layerOf[v]].push(v); placed[v] = true; }
+    });
+    layers = layers.filter(function (L) { return L.length; });
+
+    /* 4 - ordering */
+    var ord = ordering(layers, adjUp, adjDown, o.orderIters);
+    layers = ord.layers;
+
+    /* 5 - coordinates */
+    function sep(a, b) {
+      var pa = proper[a], pb = proper[b];
+      var gap = (pa.dummy || pb.dummy) ? o.edgeSep : o.nodeSep;
+      return pa.w / 2 + pb.w / 2 + gap;
+    }
+    var xs = brandesKopf(layers, adj, adjUp, isInner, sep);
+
+    var ys = [], acc = 0;
+    layers.forEach(function (L, i) {
+      var maxH = 0;
+      L.forEach(function (v) { maxH = Math.max(maxH, proper[v].h); });
+      if (i > 0) acc += rankStep;
+      ys.push(acc + maxH / 2);
+      acc += maxH;
+    });
+
+    var P = {};
+    layers.forEach(function (L, i) {
+      L.forEach(function (v) { P[v] = { x: xs[v], y: ys[i], layer: i, w: proper[v].w, h: proper[v].h }; });
+    });
+
+    /* 6 - wrapping */
+    var chunkOf = {};
+    layers.forEach(function (L, i) { L.forEach(function (v) { chunkOf[v] = 0; }); });
+    var cuts = [], wrapBounds = null;
+    if (o.wrap && layers.length > 2) {
+      var spanCount = new Array(layers.length + 1).fill(0);
+      edges.forEach(function (e) {
+        if (!e.chain) return;
+        var a = P[e.chain[0]], b = P[e.chain[e.chain.length - 1]];
+        if (!a || !b) return;
+        var lo = Math.min(a.layer, b.layer), hi = Math.max(a.layer, b.layer);
+        for (var c = lo + 1; c <= hi; c++) spanCount[c]++;
+      });
+      var bestK = 1, bestErr = Infinity, bestCuts = [];
+      var totalEdges = Math.max(1, edges.filter(function (e) { return e.chain; }).length);
+      for (var k = 1; k <= Math.min(6, layers.length); k++) {
+        var trial = chooseCuts(layers.length, spanCount, k, o.cutFreedom);
+        var m = measureWrapped(layers, P, trial, o.wrapGap);
+        // every severed edge becomes a long detour around the chunk, so cutting through
+        // a busy layer has a real cost - weigh it against the ratio we gain
+        var severed = trial.reduce(function (acc, c2) { return acc + (spanCount[c2] || 0); }, 0);
+        var err = Math.abs(Math.log((m.w / Math.max(1, m.h)) / o.targetAR))
+                + (severed / totalEdges) * 0.9;
+        if (err < bestErr) { bestErr = err; bestK = k; bestCuts = trial; }
+      }
+      cuts = bestCuts;
+      if (cuts.length) wrapBounds = applyWrap(layers, P, chunkOf, cuts, o.wrapGap);
+    }
+
+    /* 7 - assemble output */
+    var outNodes = nodes.map(function (n) {
+      var p = P[n.id];
+      return {
+        id: n.id, label: n.label, lines: n.lines, shape: n.shape,
+        x: p.x, y: p.y, w: n.w, h: n.h, textDy: n.textDy || 0,
+        layer: p.layer, chunk: chunkOf[n.id] || 0
+      };
+    });
+
+    var outEdges = [], wrapLane = 0;
+    edges.forEach(function (e) {
+      if (e.selfLoop) {
+        outEdges.push({
+          id: e.id, from: e.from, to: e.to, label: e.label, style: e.style, arrow: e.arrow,
+          selfLoop: true, points: [], labelPos: null
+        });
+        return;
+      }
+      var chain = e.flip ? e.chain.slice().reverse() : e.chain;
+      var pts = chain.map(function (c) {
+        return { x: P[c].x, y: P[c].y, chunk: chunkOf[c] || 0, layer: P[c].layer };
+      });
+      if (wrapBounds) {
+        var routed = [pts[0]];
+        for (var pi = 0; pi + 1 < pts.length; pi++) {
+          if (pts[pi].chunk !== pts[pi + 1].chunk) {
+            var det = detour(pts, pi, wrapBounds, wrapLane++, o.wrapGap);
+            if (det) det.forEach(function (d) { routed.push(d); });
+          }
+          routed.push(pts[pi + 1]);
+        }
+        pts = routed;
+      }
+      var labelPos = null;
+      chain.forEach(function (c) {
+        if (proper[c] && proper[c].isLabel) labelPos = { x: P[c].x, y: P[c].y };
+      });
+      outEdges.push({
+        id: e.id, from: e.from, to: e.to, label: e.label, style: e.style, arrow: e.arrow,
+        reversed: e.reversed, points: pts, labelPos: labelPos, wrapped: pts.some(function (p, i) {
+          return i > 0 && p.chunk !== pts[i - 1].chunk;
+        })
+      });
+    });
+
+    /* transpose back for LR/RL */
+    if (horizontal) {
+      outNodes.forEach(function (n) {
+        var t = n.x; n.x = n.y; n.y = t;
+        t = n.w; n.w = n.h; n.h = t;
+      });
+      outEdges.forEach(function (e) {
+        e.points.forEach(function (p) { var t = p.x; p.x = p.y; p.y = t; });
+        if (e.labelPos) { var t2 = e.labelPos.x; e.labelPos.x = e.labelPos.y; e.labelPos.y = t2; }
+      });
+    }
+    if (dir === 'BT' || dir === 'RL') {
+      var axis = (dir === 'BT') ? 'y' : 'x';
+      outNodes.forEach(function (n) { n[axis] = -n[axis]; });
+      outEdges.forEach(function (e) {
+        e.points.forEach(function (p) { p[axis] = -p[axis]; });
+        if (e.labelPos) e.labelPos[axis] = -e.labelPos[axis];
+      });
+    }
+
+    /* normalise to origin */
+    var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    outNodes.forEach(function (n) {
+      minX = Math.min(minX, n.x - n.w / 2); maxX = Math.max(maxX, n.x + n.w / 2);
+      minY = Math.min(minY, n.y - n.h / 2); maxY = Math.max(maxY, n.y + n.h / 2);
+    });
+    outEdges.forEach(function (e) {
+      e.points.forEach(function (p) {
+        minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x);
+        minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y);
+      });
+    });
+    if (!isFinite(minX)) { minX = 0; minY = 0; maxX = 0; maxY = 0; }
+    var pad = 24;
+    outNodes.forEach(function (n) { n.x = n.x - minX + pad; n.y = n.y - minY + pad; });
+    outEdges.forEach(function (e) {
+      e.points.forEach(function (p) { p.x = p.x - minX + pad; p.y = p.y - minY + pad; });
+      if (e.labelPos) { e.labelPos.x = e.labelPos.x - minX + pad; e.labelPos.y = e.labelPos.y - minY + pad; }
+    });
+
+    var W = maxX - minX + pad * 2, H = maxY - minY + pad * 2;
+
+    /* clip endpoints + build route geometry */
+    var nodeById = {};
+    outNodes.forEach(function (n) { nodeById[n.id] = n; });
+    var flowVertical = !(dir === 'LR' || dir === 'RL');
+    if (o.routing === 'polyline') {
+      // polyline is the honest straight-line mode: aim at the target, clip on the outline
+      outEdges.forEach(function (e) {
+        if (e.selfLoop) return;
+        var pts = e.points;
+        var src = nodeById[e.from], dst = nodeById[e.to];
+        pts[0] = clipToShape(src, pts[1] || { x: dst.x, y: dst.y });
+        pts[pts.length - 1] = clipToShape(dst, pts[pts.length - 2] || { x: src.x, y: src.y });
+        pts[0].layer = src.layer; pts[0].chunk = src.chunk; pts[0].nodeId = src.id;
+        pts[pts.length - 1].layer = dst.layer; pts[pts.length - 1].chunk = dst.chunk;
+        pts[pts.length - 1].nodeId = dst.id;
+      });
+    } else {
+      assignPorts(outEdges, nodeById, flowVertical, Math.max(14, o.edgeSep + 8));
+    }
+
+    var chan = o.routing === 'orthogonal'
+      ? assignChannels(outEdges, flowVertical ? 'y' : 'x', flowVertical ? 'x' : 'y',
+                       Math.max(6, o.edgeSep * 0.6), 14)
+      : null;
+
+    outEdges.forEach(function (e) {
+      if (e.selfLoop) { e.path = selfLoopPath(nodeById[e.from]); return; }
+      var pts = e.points;
+      e.path = buildPath(pts, o.routing, o.cornerRadius, flowVertical, chan, e.id);
+      if (!e.labelPos && e.label) {
+        var mid = pts[Math.floor(pts.length / 2)];
+        var prev = pts[Math.max(0, Math.floor(pts.length / 2) - 1)];
+        e.labelPos = { x: (mid.x + prev.x) / 2, y: (mid.y + prev.y) / 2 };
+      }
+    });
+
+    var t1 = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+    return {
+      nodes: outNodes, edges: outEdges, width: Math.round(W), height: Math.round(H),
+      dir: dir,
+      stats: {
+        nodes: outNodes.length, edges: outEdges.length,
+        layers: layers.length, dummies: dummyCount,
+        crossings: ord.crossings,
+        reversed: edges.filter(function (e) { return e.reversed; }).length,
+        chunks: cuts.length + 1,
+        width: Math.round(W), height: Math.round(H),
+        ar: +(W / Math.max(1, H)).toFixed(2),
+        ms: +(t1 - t0).toFixed(1)
+      }
+    };
+  }
+
+  function emptyStats(t0) {
+    return { nodes: 0, edges: 0, layers: 0, dummies: 0, crossings: 0, reversed: 0,
+             chunks: 1, width: 0, height: 0, ar: 0, ms: 0 };
+  }
+
+  function measureWrapped(layers, P, cuts, gap) {
+    var chunkIdx = {}, c = 0;
+    for (var i = 0; i < layers.length; i++) {
+      if (cuts.indexOf(i) >= 0) c++;
+      chunkIdx[i] = c;
+    }
+    var lo = {}, hi = {}, top = {}, bot = {};
+    layers.forEach(function (L, i) {
+      var ci = chunkIdx[i];
+      L.forEach(function (v) {
+        var p = P[v];
+        lo[ci] = Math.min(lo[ci] === undefined ? Infinity : lo[ci], p.x - p.w / 2);
+        hi[ci] = Math.max(hi[ci] === undefined ? -Infinity : hi[ci], p.x + p.w / 2);
+        top[ci] = Math.min(top[ci] === undefined ? Infinity : top[ci], p.y - p.h / 2);
+        bot[ci] = Math.max(bot[ci] === undefined ? -Infinity : bot[ci], p.y + p.h / 2);
+      });
+    });
+    var w = 0, h = 0, n = Object.keys(lo).length;
+    Object.keys(lo).forEach(function (k) {
+      w += hi[k] - lo[k];
+      h = Math.max(h, bot[k] - top[k]);
+    });
+    w += gap * (n - 1);
+    return { w: w, h: h };
+  }
+
+  function applyWrap(layers, P, chunkOf, cuts, gap) {
+    var chunkIdx = {}, c = 0;
+    for (var i = 0; i < layers.length; i++) {
+      if (cuts.indexOf(i) >= 0) c++;
+      chunkIdx[i] = c;
+    }
+    var lo = {}, hi = {}, top = {}, bot = {};
+    layers.forEach(function (L, i) {
+      var ci = chunkIdx[i];
+      L.forEach(function (v) {
+        var p = P[v];
+        lo[ci] = Math.min(lo[ci] === undefined ? Infinity : lo[ci], p.x - p.w / 2);
+        hi[ci] = Math.max(hi[ci] === undefined ? -Infinity : hi[ci], p.x + p.w / 2);
+        top[ci] = Math.min(top[ci] === undefined ? Infinity : top[ci], p.y - p.h / 2);
+        bot[ci] = Math.max(bot[ci] === undefined ? -Infinity : bot[ci], p.y + p.h / 2);
+      });
+    });
+    var offX = {}, run = 0;
+    var keys = Object.keys(lo).map(Number).sort(function (a, b) { return a - b; });
+    keys.forEach(function (k) {
+      offX[k] = run - lo[k];
+      run += (hi[k] - lo[k]) + gap;
+    });
+    var baseTop = top[keys[0]];
+    layers.forEach(function (L, i) {
+      var ci = chunkIdx[i];
+      L.forEach(function (v) {
+        P[v].x += offX[ci];
+        P[v].y -= (top[ci] - baseTop);
+        chunkOf[v] = ci;
+      });
+    });
+    // bounds in final (post-translation) space, for routing wrapped edges around chunks
+    var bounds = {};
+    keys.forEach(function (k) {
+      bounds[k] = {
+        left: lo[k] + offX[k], right: hi[k] + offX[k],
+        top: baseTop, bottom: bot[k] - (top[k] - baseTop)
+      };
+    });
+    return bounds;
+  }
+
+  /* An edge that crosses a cut must not be drawn straight through the gap - it has to
+     leave the bottom of one chunk, cross the gutter, and come back in at the top of the
+     next.  Each wrapped edge gets its own lane so they do not stack on top of each other. */
+  function detour(pts, i, bounds, lane, gap) {
+    var a = pts[i], b = pts[i + 1];
+    var ca = bounds[a.chunk], cb = bounds[b.chunk];
+    if (!ca || !cb) return null;
+    var forward = b.chunk > a.chunk;
+    var off = lane * 7;
+    var exitY = ca.bottom + 18 + off;
+    var enterY = cb.top - 18 - off;
+    var gutter = forward
+      ? (ca.right + cb.left) / 2 + (off - gap / 4)
+      : (cb.right + ca.left) / 2 + (off - gap / 4);
+    return [
+      { x: a.x, y: exitY, chunk: a.chunk, hard: true },
+      { x: gutter, y: exitY, chunk: a.chunk, hard: true },
+      { x: gutter, y: enterY, chunk: b.chunk, hard: true },
+      { x: b.x, y: enterY, chunk: b.chunk, hard: true }
+    ];
+  }
+
+  /* ------------------------------------------------------------------ *
+   * geometry
+   * ------------------------------------------------------------------ */
+  function clipToShape(n, toward) {
+    var dx = toward.x - n.x, dy = toward.y - n.y;
+    if (dx === 0 && dy === 0) return { x: n.x, y: n.y + n.h / 2 };
+    var hw = n.w / 2, hh = n.h / 2, t;
+    if (n.shape === 'circle' || n.shape === 'stadium' || n.shape === 'round') {
+      var a = hw, b = hh;
+      t = 1 / Math.sqrt((dx * dx) / (a * a) + (dy * dy) / (b * b));
+      if (n.shape !== 'circle') {
+        var tr = Math.min(Math.abs(hw / (dx || 1e-9)), Math.abs(hh / (dy || 1e-9)));
+        t = (t + tr) / 2;
+      }
+    } else if (n.shape === 'diamond') {
+      t = 1 / (Math.abs(dx) / hw + Math.abs(dy) / hh);
+    } else {
+      t = Math.min(Math.abs(hw / (dx || 1e-9)), Math.abs(hh / (dy || 1e-9)));
+    }
+    return { x: n.x + dx * t, y: n.y + dy * t, chunk: toward.chunk };
+  }
+
+  /* Geometric clipping sends an edge out of whichever point on the outline lies on the
+     straight line to its target - which for a box means it can leave through a corner and
+     arrive at a corner, and several edges converging on one node all land on the same spot.
+     Real orthogonal routers attach to the face perpendicular to the flow and spread the
+     attachment points along it.  That is what this does. */
+  var SPREAD = {
+    rect: 0.66, round: 0.6, stadium: 0.5, diamond: 0.5,
+    circle: 0.5, cylinder: 0.62, hexagon: 0.52, parallelogram: 0.5
+  };
+
+  // where the shape's outline sits, `off` across from the centre, on the `side` face
+  function faceProject(n, off, side, vertical) {
+    var halfCross = (vertical ? n.w : n.h) / 2;
+    var halfFlow = (vertical ? n.h : n.w) / 2;
+    var r = halfCross ? Math.min(1, Math.abs(off) / halfCross) : 0;
+    var d = halfFlow;
+    if (n.shape === 'diamond') d = halfFlow * (1 - r);
+    else if (n.shape === 'circle') d = halfFlow * Math.sqrt(Math.max(0, 1 - r * r));
+    else if (n.shape === 'cylinder' && vertical) {
+      var e = Math.min(12, n.h / 4);
+      d = halfFlow - e + e * Math.sqrt(Math.max(0, 1 - r * r));
+    }
+    return vertical
+      ? { x: n.x + off, y: n.y + side * d }
+      : { x: n.x + side * d, y: n.y + off };
+  }
+
+  function assignPorts(outEdges, nodeById, vertical, portGap) {
+    var buckets = {};
+    var ca = vertical ? 'x' : 'y', fa = vertical ? 'y' : 'x';
+
+    outEdges.forEach(function (e) {
+      if (e.selfLoop || e.points.length < 2) return;
+      var src = nodeById[e.from], dst = nodeById[e.to];
+      if (!src || !dst) return;
+      var nextP = e.points[1], prevP = e.points[e.points.length - 2];
+      var sSide = (nextP[fa] >= src[fa]) ? 1 : -1;
+      var dSide = (prevP[fa] <= dst[fa]) ? -1 : 1;
+      var ks = e.from + '|' + sSide, kd = e.to + '|' + dSide;
+      (buckets[ks] = buckets[ks] || { node: src, side: sSide, list: [] })
+        .list.push({ e: e, idx: 0, ref: nextP[ca], kind: 'out' });
+      (buckets[kd] = buckets[kd] || { node: dst, side: dSide, list: [] })
+        .list.push({ e: e, idx: e.points.length - 1, ref: prevP[ca], kind: 'in' });
+    });
+
+    Object.keys(buckets).forEach(function (k) {
+      var b = buckets[k], n = b.node, list = b.list;
+      list.sort(function (p, q) { return p.ref - q.ref; });
+      var halfCross = (vertical ? n.w : n.h) / 2;
+      var usable = halfCross * (SPREAD[n.shape] || 0.6);
+      var count = list.length;
+      var centre = vertical ? n.x : n.y;
+      var step = count > 1 ? Math.min(portGap, (usable * 2) / (count - 1)) : 0;
+      // Three or more edges on one face share a single track downstream, so they form a
+      // bus, and one stub into that bus reads far better than a row of short ones.  Only
+      // when the face flows one way, though: a face carrying both arrivals and departures
+      // would stack their stubs on top of each other.
+      var uniform = list.every(function (it) { return it.kind === list[0].kind; });
+      if (count >= 3 && uniform) {
+        var pc = faceProject(n, 0, b.side, vertical);
+        list.forEach(function (item) {
+          item.e.points[item.idx] = { x: pc.x, y: pc.y, layer: n.layer, chunk: n.chunk, nodeId: n.id };
+        });
+        return;
+      }
+
+      // Each port wants to sit where its partner is, so an edge arriving from straight
+      // above stays straight.  Push apart only as far as the minimum gap demands, then
+      // slide the whole block back onto the face.  Spreading evenly regardless would
+      // knock naturally-aligned edges into pointless diagonals.
+      var pos = [];
+      for (var i = 0; i < count; i++) {
+        var want = Math.max(-usable, Math.min(usable, list[i].ref - centre));
+        pos.push(i === 0 ? want : Math.max(want, pos[i - 1] + step));
+      }
+      var excess = pos[count - 1] - usable;
+      if (excess > 0) for (i = 0; i < count; i++) pos[i] -= excess;
+      var deficit = -usable - pos[0];
+      if (deficit > 0) for (i = 0; i < count; i++) pos[i] += deficit;
+
+      list.forEach(function (item, j) {
+        var p = faceProject(n, pos[j], b.side, vertical);
+        item.e.points[item.idx] = { x: p.x, y: p.y, layer: n.layer, chunk: n.chunk, nodeId: n.id };
+      });
+    });
+  }
+
+  /* Every edge that changes lane between two layers needs a run across the gap.  If they
+     all sit at the midpoint they draw on top of each other - which is exactly where ELK's
+     orthogonal router beats a naive one.  Group the runs by layer gap, then colour them
+     like an interval graph: two runs may share a track only if their spans don't overlap.
+     Track t of T sits at lo + (t+1)(hi-lo)/(T+1), so the gap stays evenly divided. */
+  function assignChannels(outEdges, fa, ca, gapPad, jog) {
+    var groups = {};
+    outEdges.forEach(function (e) {
+      if (e.selfLoop) return;
+      for (var i = 0; i + 1 < e.points.length; i++) {
+        var a = e.points[i], b = e.points[i + 1];
+        if (a.hard || b.hard) continue;
+        if (a.layer === undefined || b.layer === undefined) continue;
+        if (Math.abs(a[ca] - b[ca]) < jog) continue;      // straight enough, no run needed
+        if (Math.abs(a[fa] - b[fa]) < 1) continue;
+        var key = (a.chunk | 0) + '#' + Math.min(a.layer, b.layer) + '#' + Math.max(a.layer, b.layer);
+        (groups[key] = groups[key] || []).push({
+          eid: e.id, i: i, aId: a.nodeId, bId: b.nodeId,
+          lo: Math.min(a[fa], b[fa]), hi: Math.max(a[fa], b[fa]),
+          c0: Math.min(a[ca], b[ca]), c1: Math.max(a[ca], b[ca])
+        });
+      }
+    });
+
+    var out = {};
+    Object.keys(groups).forEach(function (k) {
+      var segs = groups[k];
+      // usable band = the span every run in this gap can reach
+      var lo = -Infinity, hi = Infinity;
+      segs.forEach(function (s) { lo = Math.max(lo, s.lo); hi = Math.min(hi, s.hi); });
+      if (!(hi - lo > 2)) { lo = segs[0].lo; hi = segs[0].hi; }
+
+      // Runs that share an endpoint are one hyperedge - a fan-out or a merge - and belong
+      // on a single shared track.  Giving each its own track is what turns a clean bus into
+      // a stack of nested ladders.
+      var count = {};
+      segs.forEach(function (s) {
+        if (s.aId) count[s.aId] = (count[s.aId] || 0) + 1;
+        if (s.bId) count[s.bId] = (count[s.bId] || 0) + 1;
+      });
+      var hyper = {}, order = [];
+      segs.forEach(function (s, idx) {
+        var ca2 = s.aId ? (count[s.aId] || 0) : 0, cb2 = s.bId ? (count[s.bId] || 0) : 0;
+        var key = (ca2 > 1 && ca2 >= cb2) ? 'S' + s.aId
+                : (cb2 > 1) ? 'T' + s.bId
+                : 'u' + idx;
+        if (!hyper[key]) { hyper[key] = { c0: s.c0, c1: s.c1, segs: [] }; order.push(key); }
+        hyper[key].c0 = Math.min(hyper[key].c0, s.c0);
+        hyper[key].c1 = Math.max(hyper[key].c1, s.c1);
+        hyper[key].segs.push(s);
+      });
+
+      var bundles = order.map(function (key) { return hyper[key]; });
+      bundles.sort(function (p, q) { return p.c0 - q.c0 || p.c1 - q.c1; });
+      var tracks = [];
+      bundles.forEach(function (bd) {
+        var t = 0;
+        for (; t < tracks.length; t++) {
+          var clash = false;
+          for (var j = 0; j < tracks[t].length; j++) {
+            var o = tracks[t][j];
+            if (bd.c0 < o.c1 + gapPad && bd.c1 > o.c0 - gapPad) { clash = true; break; }
+          }
+          if (!clash) break;
+        }
+        if (t === tracks.length) tracks.push([]);
+        tracks[t].push(bd);
+        bd.track = t;
+      });
+      var T = tracks.length;
+      bundles.forEach(function (bd) {
+        var y = lo + (bd.track + 1) * (hi - lo) / (T + 1);
+        bd.segs.forEach(function (s) { out[s.eid + ':' + s.i] = y; });
+      });
+    });
+    return out;
+  }
+
+  function buildPath(pts, mode, radius, vertical, chan, eid) {
+    if (pts.length < 2) return '';
+    var wrapped = pts.some(function (p) { return p.hard; });
+    // a wrapped detour is a routing decision, not a style one.  Splining through its
+    // right angles makes Catmull-Rom overshoot into loops, so force orthogonal there.
+    if (wrapped) mode = 'orthogonal';
+    if (mode === 'polyline') return roundedPolyline(pts, radius * 0.6);
+    if (mode === 'spline') return flowSpline(pts, vertical);
+    var JOG = 14;
+    var out = ['M' + f(pts[0].x) + ' ' + f(pts[0].y)];
+    for (var i = 1; i < pts.length; i++) {
+      var a = pts[i - 1], b = pts[i];
+      var offAxis = vertical ? Math.abs(a.x - b.x) : Math.abs(a.y - b.y);
+      var onAxis = vertical ? Math.abs(a.y - b.y) : Math.abs(a.x - b.x);
+      if (offAxis < 0.6 || onAxis < 0.6 || offAxis < JOG) {
+        out.push('L' + f(b.x) + ' ' + f(b.y));
+        continue;
+      }
+      var mid = chan && chan[eid + ':' + (i - 1)];
+      if (vertical) {
+        var my = mid === undefined ? (a.y + b.y) / 2 : mid;
+        out.push('L' + f(a.x) + ' ' + f(my));
+        out.push('L' + f(b.x) + ' ' + f(my));
+        out.push('L' + f(b.x) + ' ' + f(b.y));
+      } else {
+        var mx = mid === undefined ? (a.x + b.x) / 2 : mid;
+        out.push('L' + f(mx) + ' ' + f(a.y));
+        out.push('L' + f(mx) + ' ' + f(b.y));
+        out.push('L' + f(b.x) + ' ' + f(b.y));
+      }
+    }
+    return roundCorners(out.join(''), radius);
+  }
+
+  function f(n) { return Math.round(n * 100) / 100; }
+
+  function roundedPolyline(pts, r) {
+    var d = 'M' + f(pts[0].x) + ' ' + f(pts[0].y);
+    for (var i = 1; i < pts.length; i++) d += 'L' + f(pts[i].x) + ' ' + f(pts[i].y);
+    return d;
+  }
+
+  function roundCorners(d, r) {
+    if (!r) return d;
+    var cmds = d.match(/[ML][^ML]*/g) || [];
+    var pts = cmds.map(function (c) {
+      var p = c.slice(1).trim().split(/\s+/).map(Number);
+      return { x: p[0], y: p[1] };
+    });
+    var clean = [pts[0]];
+    for (var i = 1; i < pts.length; i++) {
+      var p = pts[i], q = clean[clean.length - 1];
+      if (Math.abs(p.x - q.x) > 0.4 || Math.abs(p.y - q.y) > 0.4) clean.push(p);
+    }
+    // A vertex the line runs straight through is not a corner.  Rounding it emits a Q
+    // that draws as a straight segment anyway, which on a long dummy chain turns one
+    // vertical line into a dozen curves in every export.
+    for (i = 1; i + 1 < clean.length; i++) {
+      var a0 = clean[i - 1], b0 = clean[i], c0 = clean[i + 1];
+      var cross = (b0.x - a0.x) * (c0.y - b0.y) - (b0.y - a0.y) * (c0.x - b0.x);
+      if (Math.abs(cross) < 0.5) { clean.splice(i, 1); i--; }
+    }
+    if (clean.length < 3) {
+      return clean.map(function (p, i) { return (i ? 'L' : 'M') + f(p.x) + ' ' + f(p.y); }).join('');
+    }
+    var out = 'M' + f(clean[0].x) + ' ' + f(clean[0].y);
+    for (var j = 1; j < clean.length - 1; j++) {
+      var prev = clean[j - 1], cur = clean[j], next = clean[j + 1];
+      var d1 = dist(prev, cur), d2 = dist(cur, next);
+      var rr = Math.min(r, d1 / 2, d2 / 2);
+      var a = lerp(cur, prev, rr / (d1 || 1)), b = lerp(cur, next, rr / (d2 || 1));
+      out += 'L' + f(a.x) + ' ' + f(a.y) + 'Q' + f(cur.x) + ' ' + f(cur.y) + ' ' + f(b.x) + ' ' + f(b.y);
+    }
+    var last = clean[clean.length - 1];
+    out += 'L' + f(last.x) + ' ' + f(last.y);
+    return out;
+  }
+  function dist(a, b) { return Math.hypot(b.x - a.x, b.y - a.y); }
+  function lerp(a, b, t) { return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t }; }
+
+  /* Splines leave the source and enter the target along the flow axis, the way dot
+     routes them.  A plain Catmull-Rom degenerates to a straight line on 2-point
+     edges - and in a flowchart most edges span a single layer, so that made
+     'spline' indistinguishable from 'polyline'. */
+  function flowSpline(pts, vertical) {
+    var a = pts[0], z = pts[pts.length - 1];
+    var travel = vertical ? (z.y - a.y) : (z.x - a.x);
+    var sign = travel >= 0 ? 1 : -1;
+
+    if (pts.length === 2) {
+      var span = Math.abs(travel);
+      var k = Math.max(14, span * 0.45);
+      var c1 = vertical ? { x: a.x, y: a.y + sign * k } : { x: a.x + sign * k, y: a.y };
+      var c2 = vertical ? { x: z.x, y: z.y - sign * k } : { x: z.x - sign * k, y: z.y };
+      return 'M' + f(a.x) + ' ' + f(a.y) +
+             'C' + f(c1.x) + ' ' + f(c1.y) + ' ' + f(c2.x) + ' ' + f(c2.y) + ' ' + f(z.x) + ' ' + f(z.y);
+    }
+
+    // multi-point: Catmull-Rom with virtual endpoints offset along the flow axis,
+    // so the curve enters and leaves the boxes cleanly instead of flattening out
+    var k2 = 22 * sign;
+    var pre = vertical ? { x: a.x, y: a.y - k2 } : { x: a.x - k2, y: a.y };
+    var post = vertical ? { x: z.x, y: z.y + k2 } : { x: z.x + k2, y: z.y };
+    return catmullRom(pts, pre, post);
+  }
+
+  function catmullRom(pts, pre, post) {
+    if (pts.length === 2) {
+      return 'M' + f(pts[0].x) + ' ' + f(pts[0].y) + 'L' + f(pts[1].x) + ' ' + f(pts[1].y);
+    }
+    var p = [pre || pts[0]].concat(pts, [post || pts[pts.length - 1]]);
+    var d = 'M' + f(pts[0].x) + ' ' + f(pts[0].y);
+    for (var i = 1; i + 2 < p.length; i++) {
+      var p0 = p[i - 1], p1 = p[i], p2 = p[i + 1], p3 = p[i + 2];
+      var c1 = { x: p1.x + (p2.x - p0.x) / 6, y: p1.y + (p2.y - p0.y) / 6 };
+      var c2 = { x: p2.x - (p3.x - p1.x) / 6, y: p2.y - (p3.y - p1.y) / 6 };
+      d += 'C' + f(c1.x) + ' ' + f(c1.y) + ' ' + f(c2.x) + ' ' + f(c2.y) + ' ' + f(p2.x) + ' ' + f(p2.y);
+    }
+    return d;
+  }
+
+  function selfLoopPath(n) {
+    if (!n) return '';
+    var x = n.x + n.w / 2, y = n.y, r = Math.max(18, n.h * 0.42);
+    return 'M' + f(x) + ' ' + f(y - r * 0.4) +
+           'C' + f(x + r * 1.7) + ' ' + f(y - r * 1.2) + ' ' +
+                 f(x + r * 1.7) + ' ' + f(y + r * 1.2) + ' ' +
+                 f(x) + ' ' + f(y + r * 0.4);
+  }
+
+  return {
+    parse: parse, layout: layout, setMeasurer: setMeasurer, DEFAULTS: DEFAULTS,
+    _internals: {
+      greedyFAS: greedyFAS, longestPath: longestPath, coffmanGraham: coffmanGraham,
+      networkSimplex: networkSimplex, promote: promote, buildDag: buildDag,
+      countCrossingsBetween: countCrossingsBetween, totalCrossings: totalCrossings,
+      brandesKopf: brandesKopf, chooseCuts: chooseCuts, measure: function () { return measure; }
+    }
+  };
+});
+</script>
+<script>/* exporters.js */
+/* renderers + exporters for the flowchart layout engine */
+(function (root, factory) {
+  if (typeof module === 'object' && module.exports) module.exports = factory();
+  else root.FlowExport = factory();
+})(typeof self !== 'undefined' ? self : this, function () {
+  'use strict';
+
+  function esc(s) {
+    return String(s === undefined || s === null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+  function f(n) { return Math.round(n * 100) / 100; }
+
+  var THEME = {
+    light: {
+      bg: '#ffffff', nodeFill: '#ffffff', nodeStroke: '#3f4650', text: '#12161c',
+      edge: '#5a626e', edgeLabelBg: '#ffffff', edgeLabel: '#3f4650',
+      accentFill: '#eef2f9', accentStroke: '#2f6fd0'
+    }
+  };
+
+  /* ---------- shape geometry, shared by every renderer ---------- */
+  function shapeGeom(n) {
+    var x = n.x - n.w / 2, y = n.y - n.h / 2, w = n.w, h = n.h;
+    switch (n.shape) {
+      case 'diamond':
+        return { kind: 'poly', pts: [[n.x, y], [x + w, n.y], [n.x, y + h], [x, n.y]] };
+      case 'circle':
+        return { kind: 'ellipse', cx: n.x, cy: n.y, rx: w / 2, ry: h / 2 };
+      case 'stadium':
+        return { kind: 'rect', x: x, y: y, w: w, h: h, rx: h / 2 };
+      case 'round':
+        return { kind: 'rect', x: x, y: y, w: w, h: h, rx: Math.min(12, h / 3) };
+      case 'hexagon':
+        var k = Math.min(18, w / 5);
+        return { kind: 'poly', pts: [[x + k, y], [x + w - k, y], [x + w, n.y],
+                                     [x + w - k, y + h], [x + k, y + h], [x, n.y]] };
+      case 'parallelogram':
+        var s = Math.min(18, w / 5);
+        return { kind: 'poly', pts: [[x + s, y], [x + w, y], [x + w - s, y + h], [x, y + h]] };
+      case 'cylinder':
+        var e = Math.min(12, h / 4);
+        return { kind: 'path', d:
+          'M' + f(x) + ' ' + f(y + e) +
+          'A' + f(w / 2) + ' ' + f(e) + ' 0 0 1 ' + f(x + w) + ' ' + f(y + e) +
+          'L' + f(x + w) + ' ' + f(y + h - e) +
+          'A' + f(w / 2) + ' ' + f(e) + ' 0 0 1 ' + f(x) + ' ' + f(y + h - e) + 'Z',
+          cap: 'M' + f(x) + ' ' + f(y + e) +
+               'A' + f(w / 2) + ' ' + f(e) + ' 0 0 0 ' + f(x + w) + ' ' + f(y + e) };
+      default:
+        return { kind: 'rect', x: x, y: y, w: w, h: h, rx: 3 };
+    }
+  }
+
+  function shapeSVG(n, g, fill, stroke, sw) {
+    var a = 'fill="' + fill + '" stroke="' + stroke + '" stroke-width="' + sw + '"';
+    if (g.kind === 'rect')
+      return '<rect x="' + f(g.x) + '" y="' + f(g.y) + '" width="' + f(g.w) + '" height="' + f(g.h) +
+             '" rx="' + f(g.rx) + '" ry="' + f(g.rx) + '" ' + a + '/>';
+    if (g.kind === 'ellipse')
+      return '<ellipse cx="' + f(g.cx) + '" cy="' + f(g.cy) + '" rx="' + f(g.rx) + '" ry="' + f(g.ry) + '" ' + a + '/>';
+    if (g.kind === 'poly')
+      return '<polygon points="' + g.pts.map(function (p) { return f(p[0]) + ',' + f(p[1]); }).join(' ') + '" ' + a + '/>';
+    return '<path d="' + g.d + '" ' + a + '/>' +
+           (g.cap ? '<path d="' + g.cap + '" fill="none" stroke="' + stroke + '" stroke-width="' + sw + '"/>' : '');
+  }
+
+  function nodeText(n, color, fontSize, fontFamily) {
+    var lines = n.lines || [n.label];
+    var lh = fontSize * 1.32;
+    var startY = n.y + (n.textDy || 0) - ((lines.length - 1) * lh) / 2;
+    var out = '<text x="' + f(n.x) + '" y="' + f(startY) + '" text-anchor="middle" ' +
+              'dominant-baseline="central" font-family="' + fontFamily + '" font-size="' + fontSize +
+              '" font-weight="500" fill="' + color + '">';
+    lines.forEach(function (l, i) {
+      out += '<tspan x="' + f(n.x) + '"' + (i ? ' dy="' + f(lh) + '"' : '') + '>' + esc(l) + '</tspan>';
+    });
+    return out + '</text>';
+  }
+
+  /* ------------------------------------------------------------------ *
+   * SVG renderer.  mode 'app' adds ids/classes for interactivity,
+   * mode 'flat' emits only presentation attributes so PowerPoint /
+   * Illustrator / Visio can convert it into native editable shapes.
+   * ------------------------------------------------------------------ */
+  function toSVG(L, opts) {
+    var o = opts || {};
+    var t = THEME.light;
+    var flat = o.mode === 'flat';
+    var ff = flat ? 'Arial, Helvetica, sans-serif' : 'ui-sans-serif, system-ui, sans-serif';
+    var fs = o.fontSize || 14, efs = o.edgeFontSize || 12;
+    var s = [];
+
+    s.push('<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" ' +
+           'width="' + L.width + '" height="' + L.height + '" ' +
+           'viewBox="0 0 ' + L.width + ' ' + L.height + '">');
+    s.push('<defs><marker id="fl-arrow" viewBox="0 0 10 10" refX="9" refY="5" ' +
+           'markerWidth="7" markerHeight="7" orient="auto-start-reverse" markerUnits="strokeWidth">' +
+           '<path d="M0 0 L10 5 L0 10 z" fill="' + t.edge + '"/></marker></defs>');
+    if (flat) s.push('<rect x="0" y="0" width="' + L.width + '" height="' + L.height + '" fill="#ffffff"/>');
+
+    // edges first so nodes sit on top
+    L.edges.forEach(function (e) {
+      var dash = e.style === 'dashed' ? ' stroke-dasharray="6 4"' : '';
+      var sw = e.style === 'thick' ? 2.6 : 1.5;
+      var head = e.arrow === 'none' ? '' : ' marker-end="url(#fl-arrow)"';
+      s.push('<path ' + (flat ? '' : 'class="fl-edge" data-id="' + esc(e.id) + '" ') +
+             'd="' + e.path + '" fill="none" stroke="' + t.edge + '" stroke-width="' + sw +
+             '" stroke-linecap="round" stroke-linejoin="round"' + dash + head + '/>');
+    });
+
+    L.edges.forEach(function (e) {
+      if (!e.label || !e.labelPos) return;
+      var w = e.label.length * efs * 0.58 + 10, h = efs * 1.5;
+      s.push('<rect x="' + f(e.labelPos.x - w / 2) + '" y="' + f(e.labelPos.y - h / 2) +
+             '" width="' + f(w) + '" height="' + f(h) + '" rx="3" fill="' + t.edgeLabelBg +
+             '" stroke="none"/>');
+      s.push('<text x="' + f(e.labelPos.x) + '" y="' + f(e.labelPos.y) +
+             '" text-anchor="middle" dominant-baseline="central" font-family="' + ff +
+             '" font-size="' + efs + '" fill="' + t.edgeLabel + '">' + esc(e.label) + '</text>');
+    });
+
+    L.nodes.forEach(function (n) {
+      var g = shapeGeom(n);
+      var fill = n.shape === 'diamond' ? t.accentFill : t.nodeFill;
+      var stroke = n.shape === 'diamond' ? t.accentStroke : t.nodeStroke;
+      if (!flat) s.push('<g class="fl-node" data-id="' + esc(n.id) + '">');
+      s.push(shapeSVG(n, g, fill, stroke, 1.5));
+      s.push(nodeText(n, t.text, fs, ff));
+      if (!flat) s.push('</g>');
+    });
+
+    s.push('</svg>');
+    return s.join('\n');
+  }
+
+  /* ------------------------------------------------------------------ *
+   * draw.io / diagrams.net  mxGraphModel
+   * ------------------------------------------------------------------ */
+  var DRAWIO_STYLE = {
+    rect: 'rounded=0;whiteSpace=wrap;html=1;',
+    round: 'rounded=1;whiteSpace=wrap;html=1;arcSize=20;',
+    stadium: 'rounded=1;whiteSpace=wrap;html=1;arcSize=50;',
+    diamond: 'rhombus;whiteSpace=wrap;html=1;',
+    circle: 'ellipse;whiteSpace=wrap;html=1;',
+    cylinder: 'shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=12;',
+    hexagon: 'shape=hexagon;whiteSpace=wrap;html=1;perimeter=hexagonPerimeter2;',
+    parallelogram: 'shape=parallelogram;perimeter=parallelogramPerimeter;whiteSpace=wrap;html=1;'
+  };
+
+  function toDrawio(L, opts) {
+    var o = opts || {};
+    var routing = o.routing || 'orthogonal';
+    var edgeStyle = routing === 'orthogonal' ? 'edgeStyle=orthogonalEdgeStyle;rounded=1;'
+                  : routing === 'spline' ? 'edgeStyle=none;curved=1;rounded=0;'
+                  : 'edgeStyle=none;rounded=0;';
+    var x = [];
+    x.push('<mxfile host="flowchart-lab" modified="' + new Date().toISOString() +
+           '" agent="flowchart-lab" version="21.0.0" type="device">');
+    x.push('  <diagram id="flowchart-lab-1" name="Flowchart">');
+    x.push('    <mxGraphModel dx="' + (L.width + 200) + '" dy="' + (L.height + 200) +
+           '" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" ' +
+           'page="1" pageScale="1" pageWidth="850" pageHeight="1100" math="0" shadow="0">');
+    x.push('      <root>');
+    x.push('        <mxCell id="0" />');
+    x.push('        <mxCell id="1" parent="0" />');
+
+    var idMap = {};
+    L.nodes.forEach(function (n, i) {
+      var cid = 'node' + i;
+      idMap[n.id] = cid;
+      var style = DRAWIO_STYLE[n.shape] || DRAWIO_STYLE.rect;
+      if (n.shape === 'diamond') style += 'fillColor=#eef2f9;strokeColor=#2f6fd0;';
+      else style += 'fillColor=#ffffff;strokeColor=#3f4650;';
+      style += 'fontSize=13;fontColor=#12161c;';
+      x.push('        <mxCell id="' + cid + '" value="' + esc(String(n.label).replace(/\n/g, '<br>')) +
+             '" style="' + style + '" vertex="1" parent="1">');
+      x.push('          <mxGeometry x="' + f(n.x - n.w / 2) + '" y="' + f(n.y - n.h / 2) +
+             '" width="' + f(n.w) + '" height="' + f(n.h) + '" as="geometry" />');
+      x.push('        </mxCell>');
+    });
+
+    L.edges.forEach(function (e, i) {
+      var st = edgeStyle + 'html=1;strokeColor=#5a626e;fontSize=11;fontColor=#3f4650;';
+      if (e.style === 'dashed') st += 'dashed=1;';
+      if (e.style === 'thick') st += 'strokeWidth=2.5;';
+      if (e.arrow === 'none') st += 'endArrow=none;';
+      var src = idMap[e.from], dst = idMap[e.to];
+      x.push('        <mxCell id="edge' + i + '" value="' + esc(e.label || '') + '" style="' + st +
+             '" edge="1" parent="1" source="' + src + '" target="' + dst + '">');
+      x.push('          <mxGeometry relative="1" as="geometry">');
+      // interior waypoints preserve the computed route exactly
+      var mids = (e.points || []).slice(1, -1);
+      if (mids.length && !e.selfLoop) {
+        x.push('            <Array as="points">');
+        mids.forEach(function (p) {
+          x.push('              <mxPoint x="' + f(p.x) + '" y="' + f(p.y) + '" />');
+        });
+        x.push('            </Array>');
+      }
+      x.push('          </mxGeometry>');
+      x.push('        </mxCell>');
+    });
+
+    x.push('      </root>');
+    x.push('    </mxGraphModel>');
+    x.push('  </diagram>');
+    x.push('</mxfile>');
+    return x.join('\n');
+  }
+
+  return { toSVG: toSVG, toDrawio: toDrawio, shapeGeom: shapeGeom, esc: esc };
+});
+</script>
+<script>/* app.js */
+(function(){
+'use strict';
+var $ = function(id){ return document.getElementById(id); };
+
+/* accurate text metrics beat the built-in approximation */
+var mc = (function(){
+  try { return document.createElement('canvas').getContext('2d'); } catch(e){ return null; }
+})();
+if (mc && typeof mc.measureText === 'function') {
+  FlowLayout.setMeasurer(function(text, size, weight){
+    mc.font = (weight>=500?'500 ':'400 ') + size + 'px ui-sans-serif, system-ui, -apple-system, sans-serif';
+    return mc.measureText(text).width;
+  });
+}
+
+var PRESETS = {
+approval:`flowchart TD
+  A[New request] --> B{Complete?}
+  B -->|no| R[/Return to sender/]
+  B -->|yes| C[Assign reviewer]
+  C --> D{Under $10k?}
+  D -->|yes| E[Auto-approve]
+  D -->|no| F[Committee review]
+  F --> G{Approved?}
+  G -->|no| R
+  G -->|yes| E
+  E --> H[(Write to ledger)]
+  H --> I((Done))
+  R --> I`,
+
+chain:`flowchart TD
+  s((Intake)) --> n1[Validate schema]
+  n1 --> n2[Normalise fields]
+  n2 --> n3[Deduplicate]
+  n3 --> n4[Enrich from CRM]
+  n4 --> n5[Score risk]
+  n5 --> n6[Apply policy]
+  n6 --> n7[Reserve funds]
+  n7 --> n8[Notify customer]
+  n8 --> n9[Settle]
+  n9 --> n10[Reconcile]
+  n10 --> n11[Archive]
+  n11 --> e((Complete))`,
+
+crossy:`flowchart TD
+  a1[Ingest A] --> b3[Queue C]
+  a2[Ingest B] --> b2[Queue B]
+  a3[Ingest C] --> b1[Queue A]
+  a1 --> b1
+  a3 --> b3
+  b1 --> c2[Worker 2]
+  b2 --> c1[Worker 1]
+  b3 --> c3[Worker 3]
+  c1 --> d2[(Shard 2)]
+  c2 --> d1[(Shard 1)]
+  c3 --> d2`,
+
+state:`flowchart TD
+  idle((Idle)) --> run[Running]
+  run --> chk{Healthy?}
+  chk -->|yes| run
+  chk -->|no| back[Back off]
+  back -.-> run
+  back --> giveup{Attempts left?}
+  giveup -->|yes| back
+  giveup -->|no| dead[/Dead letter/]
+  run ==> done((Complete))
+  dead --> idle`,
+
+incident:`flowchart TD
+  a((Alert fires)) --> b[Page on-call]
+  b --> c{Acknowledged in 5m?}
+  c -->|no| d[Escalate to secondary]
+  d --> c
+  c -->|yes| e[Open incident channel]
+  e --> f[Declare severity]
+  f --> g{Sev 1 or 2?}
+  g -->|yes| h[Notify incident commander]
+  g -->|no| i[Assign single responder]
+  h --> j[Start comms timer]
+  i --> k[Begin triage]
+  j --> k
+  k --> l{Customer impact?}
+  l -->|yes| m[Post status page update]
+  l -->|no| n[Log internal only]
+  m --> o[Gather signals]
+  n --> o
+  o --> p[(Pull metrics)]
+  o --> q[(Pull traces)]
+  o --> r[(Pull recent deploys)]
+  p --> s2[Form hypothesis]
+  q --> s2
+  r --> s2
+  s2 --> t{Recent deploy suspect?}
+  t -->|yes| u[Roll back release]
+  t -->|no| v[Inspect dependencies]
+  u --> w{Recovered?}
+  v --> x{Upstream degraded?}
+  x -->|yes| y[Fail over region]
+  x -->|no| z[Deep dive logs]
+  y --> w
+  z --> aa{Root cause found?}
+  aa -->|no| s2
+  aa -->|yes| ab[Apply mitigation]
+  ab --> w
+  w -->|no| ac{Time budget left?}
+  ac -->|yes| s2
+  ac -->|no| ad[Engage vendor support]
+  ad --> w
+  w -->|yes| ae[Monitor 30 minutes]
+  ae --> af{Stable?}
+  af -->|no| s2
+  af -->|yes| ag[Post all-clear]
+  ag --> ah[Close status page]
+  ah --> ai[Schedule postmortem]
+  ai --> aj[Draft timeline]
+  aj --> ak[Identify action items]
+  ak --> al[(File follow-up tickets)]
+  al --> am[Review in weekly]
+  am --> an((Incident closed))`,
+
+wide:`flowchart TD
+  R[Dispatcher] --> A1[Region NA]
+  R --> A2[Region EU]
+  R --> A3[Region APAC]
+  R --> A4[Region LATAM]
+  R --> A5[Region MEA]
+  A1 --> Z[(Aggregate)]
+  A2 --> Z
+  A3 --> Z
+  A4 --> Z
+  A5 --> Z
+  Z --> O((Report))`
+};
+
+/* ---------- what each option actually does to the picture ---------- */
+var FX = {
+  layering:{
+    'network-simplex':'Minimises total edge length, so long edges span fewer ranks. Fewest dummy nodes; the safe default.',
+    'longest-path':'Every node sits as early as it can. Shortest drawing, but wide layers and more dummies.',
+    'coffman-graham':'Caps real nodes per layer. Narrower rows, but long edges get stretched — watch dummies climb.'
+  },
+  routing:{
+    orthogonal:'Right angles. Edges attach to faces rather than corners, fan-outs and merges share one bus, and every other run gets its own track so nothing draws on top of anything else.',
+    polyline:'Straight segments through each dummy point — shows exactly where the dummies sit. On a plain chain every edge is already vertical, so this looks identical to orthogonal.',
+    spline:'Curves leaving and entering along the flow direction. Wrap detours stay orthogonal; splining their right angles would overshoot into loops.'
+  }
+};
+function setFx(id, text, muted){
+  var el2=document.getElementById(id); if(!el2) return;
+  el2.textContent=text||''; el2.className='effect'+(muted?' nochange':'');
+}
+
+/* ---------- state ---------- */
+var view = {k:1, x:0, y:0};
+var last = null, prevStats = null, dom = {nodes:{}, edges:{}}, svgEl = null, rootG = null;
+
+function opts(){
+  return {
+    layering: $('layering').value,
+    promote: $('promote').checked,
+    cgWidth: +$('cgw').value,
+    orderIters: +$('iters').value,
+    dir: $('dir').value || null,
+    routing: $('routing').value,
+    nodeSep: +$('nodeSep').value,
+    rankSep: +$('rankSep').value,
+    wrap: $('wrap').checked,
+    targetAR: +$('ar').value
+  };
+}
+
+/* ---------- render ---------- */
+var NS='http://www.w3.org/2000/svg';
+function el(t,a){ var e=document.createElementNS(NS,t); for(var k in a) e.setAttribute(k,a[k]); return e; }
+
+function ensureSvg(){
+  if (svgEl) return;
+  svgEl = el('svg',{xmlns:NS});
+  var defs = el('defs');
+  var m = el('marker',{id:'ar',viewBox:'0 0 10 10',refX:'9',refY:'5',
+    markerWidth:'7',markerHeight:'7',orient:'auto-start-reverse',markerUnits:'strokeWidth'});
+  m.appendChild(el('path',{d:'M0 0 L10 5 L0 10 z',fill:'#5a626e'}));
+  defs.appendChild(m); svgEl.appendChild(defs);
+  rootG = el('g'); svgEl.appendChild(rootG);
+  $('canvas').appendChild(svgEl);
+}
+
+function shapeNode(n){
+  var g = FlowExport.shapeGeom({x:0,y:0,w:n.w,h:n.h,shape:n.shape});
+  var fill = n.shape==='diamond' ? '#eef2f9' : '#ffffff';
+  var stroke = n.shape==='diamond' ? '#2f6fd0' : '#3f4650';
+  var parts=[];
+  if (g.kind==='rect') parts.push(el('rect',{x:g.x,y:g.y,width:g.w,height:g.h,rx:g.rx,ry:g.rx,fill:fill,stroke:stroke,'stroke-width':1.5}));
+  else if (g.kind==='ellipse') parts.push(el('ellipse',{cx:g.cx,cy:g.cy,rx:g.rx,ry:g.ry,fill:fill,stroke:stroke,'stroke-width':1.5}));
+  else if (g.kind==='poly') parts.push(el('polygon',{points:g.pts.map(function(p){return p[0]+','+p[1];}).join(' '),fill:fill,stroke:stroke,'stroke-width':1.5}));
+  else { parts.push(el('path',{d:g.d,fill:fill,stroke:stroke,'stroke-width':1.5}));
+         if(g.cap) parts.push(el('path',{d:g.cap,fill:'none',stroke:stroke,'stroke-width':1.5})); }
+  var lines = n.lines||[n.label], lh = 14*1.32;
+  var t = el('text',{x:0,y:(n.textDy||0)-((lines.length-1)*lh)/2,'text-anchor':'middle','dominant-baseline':'central',
+    'font-family':'ui-sans-serif, system-ui, sans-serif','font-size':14,'font-weight':500,fill:'#161a1f'});
+  lines.forEach(function(l,i){
+    var ts = el('tspan',{x:0}); if(i) ts.setAttribute('dy',lh);
+    ts.textContent = l; t.appendChild(ts);
+  });
+  parts.push(t);
+  return parts;
+}
+
+function render(L){
+  ensureSvg();
+  var seenN={}, seenE={};
+
+  L.edges.forEach(function(e){
+    seenE[e.id]=1;
+    var p = dom.edges[e.id];
+    if(!p){
+      p = el('path',{class:'fl-edge',fill:'none','stroke-linecap':'round','stroke-linejoin':'round'});
+      rootG.appendChild(p); dom.edges[e.id]=p;
+    }
+    p.setAttribute('d', e.path);
+    p.setAttribute('stroke', '#5a626e');
+    p.setAttribute('stroke-width', e.style==='thick'?2.6:1.5);
+    if(e.style==='dashed') p.setAttribute('stroke-dasharray','6 4'); else p.removeAttribute('stroke-dasharray');
+    if(e.arrow==='none') p.removeAttribute('marker-end'); else p.setAttribute('marker-end','url(#ar)');
+  });
+
+  L.edges.forEach(function(e){
+    if(!e.label||!e.labelPos) return;
+    var id='lbl_'+e.id; seenE[id]=1;
+    var g = dom.edges[id];
+    if(!g){
+      g = el('g',{class:'fl-edge'});
+      g.appendChild(el('rect',{rx:3,fill:'#f4f2ed'}));
+      var t=el('text',{'text-anchor':'middle','dominant-baseline':'central',
+        'font-family':'ui-sans-serif, system-ui, sans-serif','font-size':12,fill:'#3f4650'});
+      g.appendChild(t); rootG.appendChild(g); dom.edges[id]=g;
+    }
+    var txt=g.lastChild; txt.textContent=e.label;
+    var w=e.label.length*7+10, h=18;
+    g.firstChild.setAttribute('x',-w/2); g.firstChild.setAttribute('y',-h/2);
+    g.firstChild.setAttribute('width',w); g.firstChild.setAttribute('height',h);
+    g.setAttribute('transform','translate('+e.labelPos.x+','+e.labelPos.y+')');
+  });
+
+  L.nodes.forEach(function(n){
+    seenN[n.id]=1;
+    var g = dom.nodes[n.id];
+    var sig = n.shape+'|'+n.w+'|'+n.h+'|'+(n.textDy||0)+'|'+(n.lines||[]).join('\u0001');
+    if(!g || g.dataset.sig!==sig){
+      if(g) g.remove();
+      g = el('g',{class:'fl-node'}); g.dataset.sig=sig;
+      shapeNode(n).forEach(function(p){ g.appendChild(p); });
+      rootG.appendChild(g); dom.nodes[n.id]=g;
+    }
+    g.setAttribute('transform','translate('+n.x+','+n.y+')');
+  });
+
+  Object.keys(dom.nodes).forEach(function(k){ if(!seenN[k]){ dom.nodes[k].remove(); delete dom.nodes[k]; }});
+  Object.keys(dom.edges).forEach(function(k){ if(!seenE[k]){ dom.edges[k].remove(); delete dom.edges[k]; }});
+}
+
+/* ---------- readout ---------- */
+var METRICS = [
+  {k:'crossings', get:function(s){return s.crossings;}, lower:true, lead:true},
+  {k:'dummies',   get:function(s){return s.dummies;},   lower:true},
+  {k:'layers',    get:function(s){return s.layers;}},
+  {k:'reversed',  get:function(s){return s.reversed;},  lower:true},
+  {k:'chunks',    get:function(s){return s.chunks;}},
+  {k:'size',      get:function(s){return s.width+'\u00d7'+s.height;}, text:true},
+  {k:'ratio',     get:function(s){return s.ar.toFixed(2);}, text:true},
+  {k:'time',      get:function(s){return s.ms+'ms';}, text:true}
+];
+function readout(s){
+  var box=$('readout');
+  if(!box.children.length){
+    METRICS.forEach(function(m){
+      var d=document.createElement('div');
+      d.className='metric'+(m.lead?' lead':'');
+      d.innerHTML='<span class="k">'+m.k+'</span><span class="v" data-v></span><span class="d" data-d></span>';
+      box.appendChild(d);
+    });
+  }
+  METRICS.forEach(function(m,i){
+    var cell=box.children[i];
+    var v=m.get(s);
+    cell.querySelector('[data-v]').textContent=v;
+    var dEl=cell.querySelector('[data-d]');
+    if(m.text||!prevStats){ dEl.className='d'; dEl.textContent=''; return; }
+    var was=m.get(prevStats), diff=v-was;
+    if(diff===0){ dEl.className='d'; dEl.textContent=''; return; }
+    var better = m.lower ? diff<0 : diff>0;
+    dEl.className='d on '+(better?'down':'up');
+    dEl.textContent=(diff>0?'+':'')+diff;
+  });
+}
+
+/* ---------- pan / zoom ---------- */
+function applyView(){
+  if(!rootG) return;
+  rootG.setAttribute('transform','translate('+view.x+','+view.y+') scale('+view.k+')');
+  $('zoomlabel').textContent=Math.round(view.k*100)+'%';
+}
+function fit(){
+  if(!last) return;
+  var c=$('canvas'), cw=c.clientWidth, ch=c.clientHeight;
+  if(!cw||!ch) return;
+  var k=Math.min(cw/(last.width+40), ch/(last.height+40), 1.6);
+  view.k=k; view.x=(cw-last.width*k)/2; view.y=(ch-last.height*k)/2;
+  applyView();
+}
+function zoomBy(f, cx, cy){
+  var c=$('canvas');
+  cx = cx===undefined ? c.clientWidth/2 : cx;
+  cy = cy===undefined ? c.clientHeight/2 : cy;
+  var nk=Math.max(0.1, Math.min(4, view.k*f));
+  view.x = cx-(cx-view.x)*(nk/view.k);
+  view.y = cy-(cy-view.y)*(nk/view.k);
+  view.k=nk; applyView();
+}
+(function(){
+  var c=$('canvas'), dragging=false, sx=0, sy=0, ox=0, oy=0;
+  c.addEventListener('pointerdown',function(e){
+    dragging=true; sx=e.clientX; sy=e.clientY; ox=view.x; oy=view.y;
+    c.classList.add('drag'); c.setPointerCapture(e.pointerId);
+  });
+  c.addEventListener('pointermove',function(e){
+    if(!dragging) return;
+    view.x=ox+(e.clientX-sx); view.y=oy+(e.clientY-sy); applyView();
+  });
+  ['pointerup','pointercancel'].forEach(function(ev){
+    c.addEventListener(ev,function(){ dragging=false; c.classList.remove('drag'); });
+  });
+  c.addEventListener('wheel',function(e){
+    e.preventDefault();
+    var r=c.getBoundingClientRect();
+    zoomBy(e.deltaY<0?1.12:1/1.12, e.clientX-r.left, e.clientY-r.top);
+  },{passive:false});
+  c.addEventListener('keydown',function(e){
+    var step=40;
+    if(e.key==='ArrowLeft'){view.x+=step;applyView();e.preventDefault();}
+    if(e.key==='ArrowRight'){view.x-=step;applyView();e.preventDefault();}
+    if(e.key==='ArrowUp'){view.y+=step;applyView();e.preventDefault();}
+    if(e.key==='ArrowDown'){view.y-=step;applyView();e.preventDefault();}
+    if(e.key==='0'){fit();e.preventDefault();}
+  });
+  $('zin').onclick=function(){zoomBy(1.2);};
+  $('zout').onclick=function(){zoomBy(1/1.2);};
+  $('zfit').onclick=fit;
+})();
+
+/* ---------- gutter ---------- */
+function syncGutter(){
+  var ta=$('src'), n=ta.value.split('\n').length, g=$('gutter'), out=[];
+  for(var i=1;i<=n;i++) out.push(i);
+  g.textContent=out.join('\n');
+  g.scrollTop=ta.scrollTop;
+}
+
+/* ---------- run ---------- */
+var timer=null, firstRun=true;
+function run(immediate){
+  clearTimeout(timer);
+  timer=setTimeout(function(){
+    var g;
+    try { g = FlowLayout.parse($('src').value); }
+    catch(err){ showErr('parse failed: '+err.message); return; }
+    var L;
+    try { L = FlowLayout.layout(g, opts()); }
+    catch(err){ showErr('layout failed: '+err.message); return; }
+    showErr(g.errors.length ? g.errors.join('\n') : '');
+    if(last) prevStats=last.stats;
+    var sigBefore = last ? layoutSignature(last) : null;
+    last=L;
+    render(L);
+    readout(L.stats);
+    updateEffects(L, sigBefore);
+    if($('engine').value!=='none') renderCompare();
+    if(firstRun){ firstRun=false; requestAnimationFrame(fit); }
+  }, immediate?0:180);
+}
+function layoutSignature(L){
+  return L.stats.layers+'/'+L.stats.dummies+'/'+L.stats.crossings+'/'+L.stats.width+'x'+L.stats.height;
+}
+function updateEffects(L, sigBefore){
+  setFx('fx-layering', FX.layering[$('layering').value]);
+  setFx('fx-routing', FX.routing[$('routing').value]);
+
+  var it=+$('iters').value;
+  setFx('fx-iters', it===0
+    ? 'Crossing minimisation is off — this is the raw seed order.'
+    : 'Crossings settle by about pass 8; ' + it + ' passes currently gives ' + L.stats.crossings + '.');
+
+  setFx('fx-wrap', !$('wrap').checked
+    ? 'Off — the drawing keeps its natural ' + L.stats.ar.toFixed(2) + ' ratio.'
+    : (L.stats.chunks>1
+        ? 'Split into ' + L.stats.chunks + ' columns; ratio is now ' + L.stats.ar.toFixed(2) + ' against a target of ' + $('ar').value + '.'
+        : 'On, but cutting this graph would sever too many edges to be worth it. Wrapping suits chain-like flows.'));
+
+  // honest signal: some knobs genuinely do nothing on a sparse graph.  Append it rather
+  // than replace, so you still learn what the control is for.
+  if(sigBefore && lastChangedControl && sigBefore===layoutSignature(L)){
+    var slot=({layering:'fx-layering', iters:'fx-iters', wrap:'fx-wrap', routing:null})[lastChangedControl];
+    if(slot){
+      var elx=document.getElementById(slot);
+      elx.textContent = elx.textContent + '  \u2014 no change on this graph; it is too sparse for this setting to bite.';
+    }
+  }
+  lastChangedControl=null;
+}
+var lastChangedControl=null;
+
+function showErr(m){ var e=$('err'); e.textContent=m; e.className='errbar'+(m?' on':''); }
+
+/* ---------- wiring ---------- */
+['layering','promote','cgw','dir','routing','wrap'].forEach(function(id){
+  $(id).addEventListener('change',function(){
+    lastChangedControl=id;
+    $('cgrow').style.display = $('layering').value==='coffman-graham' ? '' : 'none';
+    run(true);
+  });
+});
+[['iters','itersv'],['nodeSep','nodeSepv'],['rankSep','rankSepv'],['ar','arv']].forEach(function(p){
+  $(p[0]).addEventListener('input',function(){
+    lastChangedControl=p[0]; $(p[1]).textContent=$(p[0]).value; run();
+  });
+});
+$('src').addEventListener('input',function(){ syncGutter(); run(); });
+$('src').addEventListener('scroll',function(){ $('gutter').scrollTop=$('src').scrollTop; });
+$('src').addEventListener('keydown',function(e){
+  if(e.key==='Tab'){
+    e.preventDefault();
+    var s=this.selectionStart, en=this.selectionEnd;
+    this.value=this.value.slice(0,s)+'  '+this.value.slice(en);
+    this.selectionStart=this.selectionEnd=s+2; syncGutter(); run();
+  }
+});
+$('preset').addEventListener('change',function(){
+  $('src').value=PRESETS[this.value];
+  $('wrap').checked = (this.value==='chain');
+  syncGutter(); firstRun=true; run(true);
+});
+
+
+/* ---------- comparison engines: real mermaid, loaded on demand ---------- */
+var mermaidMod = null, elkLoaded = false, cmpToken = 0;
+
+function cmpMsg(html){
+  $('cmpview').innerHTML = '<div class="cmp-msg">' + html + '</div>';
+}
+
+function loadMermaid(withElk){
+  if (mermaidMod && (!withElk || elkLoaded)) return Promise.resolve(mermaidMod);
+  var base = 'https://cdn.jsdelivr.net/npm/';
+  var p = mermaidMod
+    ? Promise.resolve(mermaidMod)
+    : import(base + 'mermaid@11/dist/mermaid.esm.min.mjs').then(function(m){
+        mermaidMod = m.default || m;
+        mermaidMod.initialize({ startOnLoad:false, theme:'base', securityLevel:'loose',
+          flowchart:{ htmlLabels:false },
+          themeVariables:{ background:'#f4f2ed', primaryColor:'#ffffff',
+            primaryBorderColor:'#3f4650', primaryTextColor:'#161a1f',
+            lineColor:'#5a626e', fontSize:'14px',
+            fontFamily:'ui-sans-serif, system-ui, sans-serif' } });
+        return mermaidMod;
+      });
+  if (!withElk) return p;
+  return p.then(function(mm){
+    if (elkLoaded) return mm;
+    return import(base + '@mermaid-js/layout-elk@0/dist/mermaid-layout-elk.esm.min.mjs')
+      .then(function(e){ mm.registerLayoutLoaders(e.default || e); elkLoaded = true; return mm; });
+  });
+}
+
+function renderCompare(){
+  var mode = $('engine').value;
+  var pane = $('compare');
+  if (mode === 'none'){ pane.classList.remove('on'); $('cmpstat').textContent = ''; return; }
+  pane.classList.add('on');
+  $('tag-b').textContent = mode === 'mermaid-elk' ? 'mermaid + ELK' : 'mermaid + dagre';
+
+  var token = ++cmpToken;
+  var src = $('src').value;
+  cmpMsg('<span>loading ' + (mode === 'mermaid-elk' ? 'mermaid + ELK' : 'mermaid') + '\u2026</span>');
+
+  loadMermaid(mode === 'mermaid-elk').then(function(mm){
+    if (token !== cmpToken) return;
+    // mermaid needs the layout declared in frontmatter, not as a render arg
+    var text = mode === 'mermaid-elk' ? '---\nconfig:\n  layout: elk\n---\n' + src : src;
+    var t0 = performance.now();
+    return mm.render('cmp' + token, text).then(function(res){
+      if (token !== cmpToken) return;
+      var ms = (performance.now() - t0).toFixed(0);
+      $('cmpview').innerHTML = res.svg;
+      var svg = $('cmpview').querySelector('svg');
+      if (svg){
+        svg.removeAttribute('width'); svg.removeAttribute('height');
+        svg.setAttribute('preserveAspectRatio','xMidYMid meet');
+        svg.style.maxWidth = 'none';
+        var vb = (svg.getAttribute('viewBox')||'').split(/[\s,]+/).map(Number);
+        var w = vb[2] ? Math.round(vb[2]) : 0, h = vb[3] ? Math.round(vb[3]) : 0;
+        $('cmpstat').textContent = w && h
+          ? w + '\u00d7' + h + '  ratio ' + (w/h).toFixed(2) + '  ' + ms + 'ms'
+          : ms + 'ms';
+      }
+    });
+  }).catch(function(err){
+    if (token !== cmpToken) return;
+    var offline = /Failed to fetch|dynamically imported|NetworkError|Importing/i.test(String(err && err.message));
+    $('cmpstat').textContent = '';
+    cmpMsg(offline
+      ? '<b>Could not reach jsdelivr</b>mermaid is fetched from a CDN, so this pane needs a network connection. Everything on the left runs offline.'
+      : '<b>mermaid could not render this</b>' + String(err && err.message || err).slice(0,200));
+  });
+}
+
+$('engine').addEventListener('change', function(){
+  if (this.value === 'none'){ $('compare').classList.remove('on'); $('cmpstat').textContent=''; }
+  else renderCompare();
+  // opening or closing the second pane resizes the first one, so the old transform
+  // would leave the drawing clipped against the new edge
+  requestAnimationFrame(fit);
+});
+
+/* ---------- export ---------- */
+function download(name, text, mime){
+  var b=new Blob([text],{type:mime}), u=URL.createObjectURL(b);
+  var a=document.createElement('a'); a.href=u; a.download=name; a.click();
+  setTimeout(function(){URL.revokeObjectURL(u);},1500);
+}
+function flash(btn,msg){
+  var t=btn.textContent; btn.textContent=msg;
+  setTimeout(function(){btn.textContent=t;},1300);
+}
+$('ex-svg').onclick=function(){
+  if(!last) return;
+  download('flowchart.svg', FlowExport.toSVG(last,{mode:'app'}), 'image/svg+xml');
+};
+$('ex-office').onclick=function(){
+  if(!last) return;
+  download('flowchart-office.svg', FlowExport.toSVG(last,{mode:'flat'}), 'image/svg+xml');
+};
+$('ex-drawio').onclick=function(){
+  if(!last) return;
+  download('flowchart.drawio', FlowExport.toDrawio(last,{routing:$('routing').value}), 'application/xml');
+};
+$('ex-copy').onclick=function(){
+  if(!last) return;
+  var xml=FlowExport.toDrawio(last,{routing:$('routing').value});
+  var self=this;
+  (navigator.clipboard ? navigator.clipboard.writeText(xml) : Promise.reject())
+    .then(function(){ flash(self,'copied'); })
+    .catch(function(){
+      var ta=document.createElement('textarea'); ta.value=xml; document.body.appendChild(ta);
+      ta.select(); try{document.execCommand('copy'); flash(self,'copied');}catch(e){flash(self,'copy failed');}
+      ta.remove();
+    });
+};
+
+window.addEventListener('resize',function(){ if(last && firstRun===false) applyView(); });
+
+/* ---------- boot ---------- */
+$('src').value=PRESETS.approval;
+syncGutter();
+run(true);
+})();
+</script>
+</body>
+</html>

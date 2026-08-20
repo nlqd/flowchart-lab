@@ -1,0 +1,566 @@
+(function(){
+'use strict';
+var $ = function(id){ return document.getElementById(id); };
+
+/* accurate text metrics beat the built-in approximation */
+var mc = (function(){
+  try { return document.createElement('canvas').getContext('2d'); } catch(e){ return null; }
+})();
+if (mc && typeof mc.measureText === 'function') {
+  FlowLayout.setMeasurer(function(text, size, weight){
+    mc.font = (weight>=500?'500 ':'400 ') + size + 'px ui-sans-serif, system-ui, -apple-system, sans-serif';
+    return mc.measureText(text).width;
+  });
+}
+
+var PRESETS = {
+approval:`flowchart TD
+  A[New request] --> B{Complete?}
+  B -->|no| R[/Return to sender/]
+  B -->|yes| C[Assign reviewer]
+  C --> D{Under $10k?}
+  D -->|yes| E[Auto-approve]
+  D -->|no| F[Committee review]
+  F --> G{Approved?}
+  G -->|no| R
+  G -->|yes| E
+  E --> H[(Write to ledger)]
+  H --> I((Done))
+  R --> I`,
+
+chain:`flowchart TD
+  s((Intake)) --> n1[Validate schema]
+  n1 --> n2[Normalise fields]
+  n2 --> n3[Deduplicate]
+  n3 --> n4[Enrich from CRM]
+  n4 --> n5[Score risk]
+  n5 --> n6[Apply policy]
+  n6 --> n7[Reserve funds]
+  n7 --> n8[Notify customer]
+  n8 --> n9[Settle]
+  n9 --> n10[Reconcile]
+  n10 --> n11[Archive]
+  n11 --> e((Complete))`,
+
+crossy:`flowchart TD
+  a1[Ingest A] --> b3[Queue C]
+  a2[Ingest B] --> b2[Queue B]
+  a3[Ingest C] --> b1[Queue A]
+  a1 --> b1
+  a3 --> b3
+  b1 --> c2[Worker 2]
+  b2 --> c1[Worker 1]
+  b3 --> c3[Worker 3]
+  c1 --> d2[(Shard 2)]
+  c2 --> d1[(Shard 1)]
+  c3 --> d2`,
+
+state:`flowchart TD
+  idle((Idle)) --> run[Running]
+  run --> chk{Healthy?}
+  chk -->|yes| run
+  chk -->|no| back[Back off]
+  back -.-> run
+  back --> giveup{Attempts left?}
+  giveup -->|yes| back
+  giveup -->|no| dead[/Dead letter/]
+  run ==> done((Complete))
+  dead --> idle`,
+
+incident:`flowchart TD
+  a((Alert fires)) --> b[Page on-call]
+  b --> c{Acknowledged in 5m?}
+  c -->|no| d[Escalate to secondary]
+  d --> c
+  c -->|yes| e[Open incident channel]
+  e --> f[Declare severity]
+  f --> g{Sev 1 or 2?}
+  g -->|yes| h[Notify incident commander]
+  g -->|no| i[Assign single responder]
+  h --> j[Start comms timer]
+  i --> k[Begin triage]
+  j --> k
+  k --> l{Customer impact?}
+  l -->|yes| m[Post status page update]
+  l -->|no| n[Log internal only]
+  m --> o[Gather signals]
+  n --> o
+  o --> p[(Pull metrics)]
+  o --> q[(Pull traces)]
+  o --> r[(Pull recent deploys)]
+  p --> s2[Form hypothesis]
+  q --> s2
+  r --> s2
+  s2 --> t{Recent deploy suspect?}
+  t -->|yes| u[Roll back release]
+  t -->|no| v[Inspect dependencies]
+  u --> w{Recovered?}
+  v --> x{Upstream degraded?}
+  x -->|yes| y[Fail over region]
+  x -->|no| z[Deep dive logs]
+  y --> w
+  z --> aa{Root cause found?}
+  aa -->|no| s2
+  aa -->|yes| ab[Apply mitigation]
+  ab --> w
+  w -->|no| ac{Time budget left?}
+  ac -->|yes| s2
+  ac -->|no| ad[Engage vendor support]
+  ad --> w
+  w -->|yes| ae[Monitor 30 minutes]
+  ae --> af{Stable?}
+  af -->|no| s2
+  af -->|yes| ag[Post all-clear]
+  ag --> ah[Close status page]
+  ah --> ai[Schedule postmortem]
+  ai --> aj[Draft timeline]
+  aj --> ak[Identify action items]
+  ak --> al[(File follow-up tickets)]
+  al --> am[Review in weekly]
+  am --> an((Incident closed))`,
+
+wide:`flowchart TD
+  R[Dispatcher] --> A1[Region NA]
+  R --> A2[Region EU]
+  R --> A3[Region APAC]
+  R --> A4[Region LATAM]
+  R --> A5[Region MEA]
+  A1 --> Z[(Aggregate)]
+  A2 --> Z
+  A3 --> Z
+  A4 --> Z
+  A5 --> Z
+  Z --> O((Report))`
+};
+
+/* ---------- what each option actually does to the picture ---------- */
+var FX = {
+  layering:{
+    'network-simplex':'Minimises total edge length, so long edges span fewer ranks. Fewest dummy nodes; the safe default.',
+    'longest-path':'Every node sits as early as it can. Shortest drawing, but wide layers and more dummies.',
+    'coffman-graham':'Caps real nodes per layer. Narrower rows, but long edges get stretched — watch dummies climb.'
+  },
+  routing:{
+    orthogonal:'Right angles. Edges attach to faces rather than corners, fan-outs and merges share one bus, and every other run gets its own track so nothing draws on top of anything else.',
+    polyline:'Straight segments through each dummy point — shows exactly where the dummies sit. On a plain chain every edge is already vertical, so this looks identical to orthogonal.',
+    spline:'Curves leaving and entering along the flow direction. Wrap detours stay orthogonal; splining their right angles would overshoot into loops.'
+  }
+};
+function setFx(id, text, muted){
+  var el2=document.getElementById(id); if(!el2) return;
+  el2.textContent=text||''; el2.className='effect'+(muted?' nochange':'');
+}
+
+/* ---------- state ---------- */
+var view = {k:1, x:0, y:0};
+var last = null, prevStats = null, dom = {nodes:{}, edges:{}}, svgEl = null, rootG = null;
+
+function opts(){
+  return {
+    layering: $('layering').value,
+    promote: $('promote').checked,
+    cgWidth: +$('cgw').value,
+    orderIters: +$('iters').value,
+    dir: $('dir').value || null,
+    routing: $('routing').value,
+    nodeSep: +$('nodeSep').value,
+    rankSep: +$('rankSep').value,
+    wrap: $('wrap').checked,
+    targetAR: +$('ar').value
+  };
+}
+
+/* ---------- render ---------- */
+var NS='http://www.w3.org/2000/svg';
+function el(t,a){ var e=document.createElementNS(NS,t); for(var k in a) e.setAttribute(k,a[k]); return e; }
+
+function ensureSvg(){
+  if (svgEl) return;
+  svgEl = el('svg',{xmlns:NS});
+  var defs = el('defs');
+  var m = el('marker',{id:'ar',viewBox:'0 0 10 10',refX:'9',refY:'5',
+    markerWidth:'7',markerHeight:'7',orient:'auto-start-reverse',markerUnits:'strokeWidth'});
+  m.appendChild(el('path',{d:'M0 0 L10 5 L0 10 z',fill:'#5a626e'}));
+  defs.appendChild(m); svgEl.appendChild(defs);
+  rootG = el('g'); svgEl.appendChild(rootG);
+  $('canvas').appendChild(svgEl);
+}
+
+function shapeNode(n){
+  var g = FlowExport.shapeGeom({x:0,y:0,w:n.w,h:n.h,shape:n.shape});
+  var fill = n.shape==='diamond' ? '#eef2f9' : '#ffffff';
+  var stroke = n.shape==='diamond' ? '#2f6fd0' : '#3f4650';
+  var parts=[];
+  if (g.kind==='rect') parts.push(el('rect',{x:g.x,y:g.y,width:g.w,height:g.h,rx:g.rx,ry:g.rx,fill:fill,stroke:stroke,'stroke-width':1.5}));
+  else if (g.kind==='ellipse') parts.push(el('ellipse',{cx:g.cx,cy:g.cy,rx:g.rx,ry:g.ry,fill:fill,stroke:stroke,'stroke-width':1.5}));
+  else if (g.kind==='poly') parts.push(el('polygon',{points:g.pts.map(function(p){return p[0]+','+p[1];}).join(' '),fill:fill,stroke:stroke,'stroke-width':1.5}));
+  else { parts.push(el('path',{d:g.d,fill:fill,stroke:stroke,'stroke-width':1.5}));
+         if(g.cap) parts.push(el('path',{d:g.cap,fill:'none',stroke:stroke,'stroke-width':1.5})); }
+  var lines = n.lines||[n.label], lh = 14*1.32;
+  var t = el('text',{x:0,y:(n.textDy||0)-((lines.length-1)*lh)/2,'text-anchor':'middle','dominant-baseline':'central',
+    'font-family':'ui-sans-serif, system-ui, sans-serif','font-size':14,'font-weight':500,fill:'#161a1f'});
+  lines.forEach(function(l,i){
+    var ts = el('tspan',{x:0}); if(i) ts.setAttribute('dy',lh);
+    ts.textContent = l; t.appendChild(ts);
+  });
+  parts.push(t);
+  return parts;
+}
+
+function render(L){
+  ensureSvg();
+  var seenN={}, seenE={};
+
+  L.edges.forEach(function(e){
+    seenE[e.id]=1;
+    var p = dom.edges[e.id];
+    if(!p){
+      p = el('path',{class:'fl-edge',fill:'none','stroke-linecap':'round','stroke-linejoin':'round'});
+      rootG.appendChild(p); dom.edges[e.id]=p;
+    }
+    p.setAttribute('d', e.path);
+    p.setAttribute('stroke', '#5a626e');
+    p.setAttribute('stroke-width', e.style==='thick'?2.6:1.5);
+    if(e.style==='dashed') p.setAttribute('stroke-dasharray','6 4'); else p.removeAttribute('stroke-dasharray');
+    if(e.arrow==='none') p.removeAttribute('marker-end'); else p.setAttribute('marker-end','url(#ar)');
+  });
+
+  L.edges.forEach(function(e){
+    if(!e.label||!e.labelPos) return;
+    var id='lbl_'+e.id; seenE[id]=1;
+    var g = dom.edges[id];
+    if(!g){
+      g = el('g',{class:'fl-edge'});
+      g.appendChild(el('rect',{rx:3,fill:'#f4f2ed'}));
+      var t=el('text',{'text-anchor':'middle','dominant-baseline':'central',
+        'font-family':'ui-sans-serif, system-ui, sans-serif','font-size':12,fill:'#3f4650'});
+      g.appendChild(t); rootG.appendChild(g); dom.edges[id]=g;
+    }
+    var txt=g.lastChild; txt.textContent=e.label;
+    var w=e.label.length*7+10, h=18;
+    g.firstChild.setAttribute('x',-w/2); g.firstChild.setAttribute('y',-h/2);
+    g.firstChild.setAttribute('width',w); g.firstChild.setAttribute('height',h);
+    g.setAttribute('transform','translate('+e.labelPos.x+','+e.labelPos.y+')');
+  });
+
+  L.nodes.forEach(function(n){
+    seenN[n.id]=1;
+    var g = dom.nodes[n.id];
+    var sig = n.shape+'|'+n.w+'|'+n.h+'|'+(n.textDy||0)+'|'+(n.lines||[]).join('\u0001');
+    if(!g || g.dataset.sig!==sig){
+      if(g) g.remove();
+      g = el('g',{class:'fl-node'}); g.dataset.sig=sig;
+      shapeNode(n).forEach(function(p){ g.appendChild(p); });
+      rootG.appendChild(g); dom.nodes[n.id]=g;
+    }
+    g.setAttribute('transform','translate('+n.x+','+n.y+')');
+  });
+
+  Object.keys(dom.nodes).forEach(function(k){ if(!seenN[k]){ dom.nodes[k].remove(); delete dom.nodes[k]; }});
+  Object.keys(dom.edges).forEach(function(k){ if(!seenE[k]){ dom.edges[k].remove(); delete dom.edges[k]; }});
+}
+
+/* ---------- readout ---------- */
+var METRICS = [
+  {k:'crossings', get:function(s){return s.crossings;}, lower:true, lead:true},
+  {k:'dummies',   get:function(s){return s.dummies;},   lower:true},
+  {k:'layers',    get:function(s){return s.layers;}},
+  {k:'reversed',  get:function(s){return s.reversed;},  lower:true},
+  {k:'chunks',    get:function(s){return s.chunks;}},
+  {k:'size',      get:function(s){return s.width+'\u00d7'+s.height;}, text:true},
+  {k:'ratio',     get:function(s){return s.ar.toFixed(2);}, text:true},
+  {k:'time',      get:function(s){return s.ms+'ms';}, text:true}
+];
+function readout(s){
+  var box=$('readout');
+  if(!box.children.length){
+    METRICS.forEach(function(m){
+      var d=document.createElement('div');
+      d.className='metric'+(m.lead?' lead':'');
+      d.innerHTML='<span class="k">'+m.k+'</span><span class="v" data-v></span><span class="d" data-d></span>';
+      box.appendChild(d);
+    });
+  }
+  METRICS.forEach(function(m,i){
+    var cell=box.children[i];
+    var v=m.get(s);
+    cell.querySelector('[data-v]').textContent=v;
+    var dEl=cell.querySelector('[data-d]');
+    if(m.text||!prevStats){ dEl.className='d'; dEl.textContent=''; return; }
+    var was=m.get(prevStats), diff=v-was;
+    if(diff===0){ dEl.className='d'; dEl.textContent=''; return; }
+    var better = m.lower ? diff<0 : diff>0;
+    dEl.className='d on '+(better?'down':'up');
+    dEl.textContent=(diff>0?'+':'')+diff;
+  });
+}
+
+/* ---------- pan / zoom ---------- */
+function applyView(){
+  if(!rootG) return;
+  rootG.setAttribute('transform','translate('+view.x+','+view.y+') scale('+view.k+')');
+  $('zoomlabel').textContent=Math.round(view.k*100)+'%';
+}
+function fit(){
+  if(!last) return;
+  var c=$('canvas'), cw=c.clientWidth, ch=c.clientHeight;
+  if(!cw||!ch) return;
+  var k=Math.min(cw/(last.width+40), ch/(last.height+40), 1.6);
+  view.k=k; view.x=(cw-last.width*k)/2; view.y=(ch-last.height*k)/2;
+  applyView();
+}
+function zoomBy(f, cx, cy){
+  var c=$('canvas');
+  cx = cx===undefined ? c.clientWidth/2 : cx;
+  cy = cy===undefined ? c.clientHeight/2 : cy;
+  var nk=Math.max(0.1, Math.min(4, view.k*f));
+  view.x = cx-(cx-view.x)*(nk/view.k);
+  view.y = cy-(cy-view.y)*(nk/view.k);
+  view.k=nk; applyView();
+}
+(function(){
+  var c=$('canvas'), dragging=false, sx=0, sy=0, ox=0, oy=0;
+  c.addEventListener('pointerdown',function(e){
+    dragging=true; sx=e.clientX; sy=e.clientY; ox=view.x; oy=view.y;
+    c.classList.add('drag'); c.setPointerCapture(e.pointerId);
+  });
+  c.addEventListener('pointermove',function(e){
+    if(!dragging) return;
+    view.x=ox+(e.clientX-sx); view.y=oy+(e.clientY-sy); applyView();
+  });
+  ['pointerup','pointercancel'].forEach(function(ev){
+    c.addEventListener(ev,function(){ dragging=false; c.classList.remove('drag'); });
+  });
+  c.addEventListener('wheel',function(e){
+    e.preventDefault();
+    var r=c.getBoundingClientRect();
+    zoomBy(e.deltaY<0?1.12:1/1.12, e.clientX-r.left, e.clientY-r.top);
+  },{passive:false});
+  c.addEventListener('keydown',function(e){
+    var step=40;
+    if(e.key==='ArrowLeft'){view.x+=step;applyView();e.preventDefault();}
+    if(e.key==='ArrowRight'){view.x-=step;applyView();e.preventDefault();}
+    if(e.key==='ArrowUp'){view.y+=step;applyView();e.preventDefault();}
+    if(e.key==='ArrowDown'){view.y-=step;applyView();e.preventDefault();}
+    if(e.key==='0'){fit();e.preventDefault();}
+  });
+  $('zin').onclick=function(){zoomBy(1.2);};
+  $('zout').onclick=function(){zoomBy(1/1.2);};
+  $('zfit').onclick=fit;
+})();
+
+/* ---------- gutter ---------- */
+function syncGutter(){
+  var ta=$('src'), n=ta.value.split('\n').length, g=$('gutter'), out=[];
+  for(var i=1;i<=n;i++) out.push(i);
+  g.textContent=out.join('\n');
+  g.scrollTop=ta.scrollTop;
+}
+
+/* ---------- run ---------- */
+var timer=null, firstRun=true;
+function run(immediate){
+  clearTimeout(timer);
+  timer=setTimeout(function(){
+    var g;
+    try { g = FlowLayout.parse($('src').value); }
+    catch(err){ showErr('parse failed: '+err.message); return; }
+    var L;
+    try { L = FlowLayout.layout(g, opts()); }
+    catch(err){ showErr('layout failed: '+err.message); return; }
+    showErr(g.errors.length ? g.errors.join('\n') : '');
+    if(last) prevStats=last.stats;
+    var sigBefore = last ? layoutSignature(last) : null;
+    last=L;
+    render(L);
+    readout(L.stats);
+    updateEffects(L, sigBefore);
+    if($('engine').value!=='none') renderCompare();
+    if(firstRun){ firstRun=false; requestAnimationFrame(fit); }
+  }, immediate?0:180);
+}
+function layoutSignature(L){
+  return L.stats.layers+'/'+L.stats.dummies+'/'+L.stats.crossings+'/'+L.stats.width+'x'+L.stats.height;
+}
+function updateEffects(L, sigBefore){
+  setFx('fx-layering', FX.layering[$('layering').value]);
+  setFx('fx-routing', FX.routing[$('routing').value]);
+
+  var it=+$('iters').value;
+  setFx('fx-iters', it===0
+    ? 'Crossing minimisation is off — this is the raw seed order.'
+    : 'Crossings settle by about pass 8; ' + it + ' passes currently gives ' + L.stats.crossings + '.');
+
+  setFx('fx-wrap', !$('wrap').checked
+    ? 'Off — the drawing keeps its natural ' + L.stats.ar.toFixed(2) + ' ratio.'
+    : (L.stats.chunks>1
+        ? 'Split into ' + L.stats.chunks + ' columns; ratio is now ' + L.stats.ar.toFixed(2) + ' against a target of ' + $('ar').value + '.'
+        : 'On, but cutting this graph would sever too many edges to be worth it. Wrapping suits chain-like flows.'));
+
+  // honest signal: some knobs genuinely do nothing on a sparse graph.  Append it rather
+  // than replace, so you still learn what the control is for.
+  if(sigBefore && lastChangedControl && sigBefore===layoutSignature(L)){
+    var slot=({layering:'fx-layering', iters:'fx-iters', wrap:'fx-wrap', routing:null})[lastChangedControl];
+    if(slot){
+      var elx=document.getElementById(slot);
+      elx.textContent = elx.textContent + '  \u2014 no change on this graph; it is too sparse for this setting to bite.';
+    }
+  }
+  lastChangedControl=null;
+}
+var lastChangedControl=null;
+
+function showErr(m){ var e=$('err'); e.textContent=m; e.className='errbar'+(m?' on':''); }
+
+/* ---------- wiring ---------- */
+['layering','promote','cgw','dir','routing','wrap'].forEach(function(id){
+  $(id).addEventListener('change',function(){
+    lastChangedControl=id;
+    $('cgrow').style.display = $('layering').value==='coffman-graham' ? '' : 'none';
+    run(true);
+  });
+});
+[['iters','itersv'],['nodeSep','nodeSepv'],['rankSep','rankSepv'],['ar','arv']].forEach(function(p){
+  $(p[0]).addEventListener('input',function(){
+    lastChangedControl=p[0]; $(p[1]).textContent=$(p[0]).value; run();
+  });
+});
+$('src').addEventListener('input',function(){ syncGutter(); run(); });
+$('src').addEventListener('scroll',function(){ $('gutter').scrollTop=$('src').scrollTop; });
+$('src').addEventListener('keydown',function(e){
+  if(e.key==='Tab'){
+    e.preventDefault();
+    var s=this.selectionStart, en=this.selectionEnd;
+    this.value=this.value.slice(0,s)+'  '+this.value.slice(en);
+    this.selectionStart=this.selectionEnd=s+2; syncGutter(); run();
+  }
+});
+$('preset').addEventListener('change',function(){
+  $('src').value=PRESETS[this.value];
+  $('wrap').checked = (this.value==='chain');
+  syncGutter(); firstRun=true; run(true);
+});
+
+
+/* ---------- comparison engines: real mermaid, loaded on demand ---------- */
+var mermaidMod = null, elkLoaded = false, cmpToken = 0;
+
+function cmpMsg(html){
+  $('cmpview').innerHTML = '<div class="cmp-msg">' + html + '</div>';
+}
+
+function loadMermaid(withElk){
+  if (mermaidMod && (!withElk || elkLoaded)) return Promise.resolve(mermaidMod);
+  var base = 'https://cdn.jsdelivr.net/npm/';
+  var p = mermaidMod
+    ? Promise.resolve(mermaidMod)
+    : import(base + 'mermaid@11/dist/mermaid.esm.min.mjs').then(function(m){
+        mermaidMod = m.default || m;
+        mermaidMod.initialize({ startOnLoad:false, theme:'base', securityLevel:'loose',
+          flowchart:{ htmlLabels:false },
+          themeVariables:{ background:'#f4f2ed', primaryColor:'#ffffff',
+            primaryBorderColor:'#3f4650', primaryTextColor:'#161a1f',
+            lineColor:'#5a626e', fontSize:'14px',
+            fontFamily:'ui-sans-serif, system-ui, sans-serif' } });
+        return mermaidMod;
+      });
+  if (!withElk) return p;
+  return p.then(function(mm){
+    if (elkLoaded) return mm;
+    return import(base + '@mermaid-js/layout-elk@0/dist/mermaid-layout-elk.esm.min.mjs')
+      .then(function(e){ mm.registerLayoutLoaders(e.default || e); elkLoaded = true; return mm; });
+  });
+}
+
+function renderCompare(){
+  var mode = $('engine').value;
+  var pane = $('compare');
+  if (mode === 'none'){ pane.classList.remove('on'); $('cmpstat').textContent = ''; return; }
+  pane.classList.add('on');
+  $('tag-b').textContent = mode === 'mermaid-elk' ? 'mermaid + ELK' : 'mermaid + dagre';
+
+  var token = ++cmpToken;
+  var src = $('src').value;
+  cmpMsg('<span>loading ' + (mode === 'mermaid-elk' ? 'mermaid + ELK' : 'mermaid') + '\u2026</span>');
+
+  loadMermaid(mode === 'mermaid-elk').then(function(mm){
+    if (token !== cmpToken) return;
+    // mermaid needs the layout declared in frontmatter, not as a render arg
+    var text = mode === 'mermaid-elk' ? '---\nconfig:\n  layout: elk\n---\n' + src : src;
+    var t0 = performance.now();
+    return mm.render('cmp' + token, text).then(function(res){
+      if (token !== cmpToken) return;
+      var ms = (performance.now() - t0).toFixed(0);
+      $('cmpview').innerHTML = res.svg;
+      var svg = $('cmpview').querySelector('svg');
+      if (svg){
+        svg.removeAttribute('width'); svg.removeAttribute('height');
+        svg.setAttribute('preserveAspectRatio','xMidYMid meet');
+        svg.style.maxWidth = 'none';
+        var vb = (svg.getAttribute('viewBox')||'').split(/[\s,]+/).map(Number);
+        var w = vb[2] ? Math.round(vb[2]) : 0, h = vb[3] ? Math.round(vb[3]) : 0;
+        $('cmpstat').textContent = w && h
+          ? w + '\u00d7' + h + '  ratio ' + (w/h).toFixed(2) + '  ' + ms + 'ms'
+          : ms + 'ms';
+      }
+    });
+  }).catch(function(err){
+    if (token !== cmpToken) return;
+    var offline = /Failed to fetch|dynamically imported|NetworkError|Importing/i.test(String(err && err.message));
+    $('cmpstat').textContent = '';
+    cmpMsg(offline
+      ? '<b>Could not reach jsdelivr</b>mermaid is fetched from a CDN, so this pane needs a network connection. Everything on the left runs offline.'
+      : '<b>mermaid could not render this</b>' + String(err && err.message || err).slice(0,200));
+  });
+}
+
+$('engine').addEventListener('change', function(){
+  if (this.value === 'none'){ $('compare').classList.remove('on'); $('cmpstat').textContent=''; }
+  else renderCompare();
+  // opening or closing the second pane resizes the first one, so the old transform
+  // would leave the drawing clipped against the new edge
+  requestAnimationFrame(fit);
+});
+
+/* ---------- export ---------- */
+function download(name, text, mime){
+  var b=new Blob([text],{type:mime}), u=URL.createObjectURL(b);
+  var a=document.createElement('a'); a.href=u; a.download=name; a.click();
+  setTimeout(function(){URL.revokeObjectURL(u);},1500);
+}
+function flash(btn,msg){
+  var t=btn.textContent; btn.textContent=msg;
+  setTimeout(function(){btn.textContent=t;},1300);
+}
+$('ex-svg').onclick=function(){
+  if(!last) return;
+  download('flowchart.svg', FlowExport.toSVG(last,{mode:'app'}), 'image/svg+xml');
+};
+$('ex-office').onclick=function(){
+  if(!last) return;
+  download('flowchart-office.svg', FlowExport.toSVG(last,{mode:'flat'}), 'image/svg+xml');
+};
+$('ex-drawio').onclick=function(){
+  if(!last) return;
+  download('flowchart.drawio', FlowExport.toDrawio(last,{routing:$('routing').value}), 'application/xml');
+};
+$('ex-copy').onclick=function(){
+  if(!last) return;
+  var xml=FlowExport.toDrawio(last,{routing:$('routing').value});
+  var self=this;
+  (navigator.clipboard ? navigator.clipboard.writeText(xml) : Promise.reject())
+    .then(function(){ flash(self,'copied'); })
+    .catch(function(){
+      var ta=document.createElement('textarea'); ta.value=xml; document.body.appendChild(ta);
+      ta.select(); try{document.execCommand('copy'); flash(self,'copied');}catch(e){flash(self,'copy failed');}
+      ta.remove();
+    });
+};
+
+window.addEventListener('resize',function(){ if(last && firstRun===false) applyView(); });
+
+/* ---------- boot ---------- */
+$('src').value=PRESETS.approval;
+syncGutter();
+run(true);
+})();

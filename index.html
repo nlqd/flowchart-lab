@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Flowchart Lab — Sugiyama layout workbench</title>
+<meta name="description" content="A Sugiyama-pipeline flowchart layout engine you can take apart: swap the layering algorithm, watch the crossing count move, compare the result against mermaid, export to draw.io or Office.">
+<meta name="theme-color" content="#14181d">
+<meta name="color-scheme" content="dark">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 18 18'%3E%3Crect width='18' height='18' rx='3' fill='%2314181d'/%3E%3Crect x='6' y='2' width='6' height='4' fill='none' stroke='%234d9fe8' stroke-width='1.6'/%3E%3Crect x='1' y='12' width='6' height='4' fill='none' stroke='%2378828e' stroke-width='1.6'/%3E%3Crect x='11' y='12' width='6' height='4' fill='none' stroke='%2378828e' stroke-width='1.6'/%3E%3Cpath d='M9 6v3H4v3M9 9h5v3' fill='none' stroke='%23d99a2b' stroke-width='1.6'/%3E%3C/svg%3E">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Flowchart Lab">
+<meta property="og:description" content="A Sugiyama-pipeline flowchart layout engine you can take apart, side by side with mermaid.">
+<meta name="twitter:card" content="summary">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --graphite:#14181d; --slate:#1b2129; --panel:#212932; --panel-hi:#28313c;
+  --rule:#2f3844; --rule-hi:#414c5c;
+  --vellum:#f4f2ed; --ink:#161a1f;
+  --dim:#78828e; --mid:#a7b0bb; --bright:#e4e8ed;
+  --signal:#4d9fe8; --trace:#d99a2b; --good:#5fb37a; --bad:#d97070;
+  --mono:"IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{
+  margin:0; background:var(--graphite); color:var(--mid);
+  font-family:var(--mono); font-size:13px; line-height:1.5;
+  -webkit-font-smoothing:antialiased;
+  display:grid; grid-template-rows:auto minmax(0,1fr);
+}
+
+/* ---------- header ---------- */
+header{
+  display:flex; align-items:center; gap:18px; padding:0 16px; height:52px;
+  border-bottom:1px solid var(--rule); background:var(--slate);
+}
+.mark{display:flex; align-items:center; gap:9px; color:var(--bright); font-weight:600; letter-spacing:.01em}
+.mark svg{display:block}
+.mark small{color:var(--dim); font-weight:400; letter-spacing:.02em}
+.spacer{flex:1}
+.exports{display:flex; gap:6px; flex-wrap:wrap}
+
+button, select, input[type=number]{
+  font-family:var(--mono); font-size:12px; color:var(--mid);
+  background:var(--panel); border:1px solid var(--rule-hi); border-radius:4px;
+  padding:6px 10px; cursor:pointer; transition:background .12s, border-color .12s, color .12s;
+}
+button:hover, select:hover{background:var(--panel-hi); color:var(--bright); border-color:#4e5a6b}
+button:active{transform:translateY(1px)}
+button:focus-visible, select:focus-visible, textarea:focus-visible, input:focus-visible{
+  outline:2px solid var(--signal); outline-offset:1px;
+}
+button.primary{border-color:#2f5f8c; color:#bcdcfa; background:#1c2c3c}
+button.primary:hover{background:#23384c; color:#e2f0ff}
+select{padding-right:6px}
+
+/* ---------- main ---------- */
+main{display:grid; grid-template-columns:minmax(280px,360px) minmax(0,1fr); min-height:0}
+
+/* ---------- left ---------- */
+.side{display:flex; flex-direction:column; min-height:0; border-right:1px solid var(--rule); background:var(--slate)}
+.side-head{
+  display:flex; align-items:center; justify-content:space-between; gap:8px;
+  padding:9px 12px; border-bottom:1px solid var(--rule);
+  font-size:11px; letter-spacing:.08em; color:var(--dim);
+}
+.editor-wrap{position:relative; display:flex; min-height:140px; flex:1 1 auto; overflow:hidden}
+.gutter{
+  padding:12px 6px 12px 10px; text-align:right; color:#4b5563; background:var(--graphite);
+  font-size:12px; line-height:19px; user-select:none; overflow:hidden; border-right:1px solid var(--rule);
+  white-space:pre;
+  min-width:38px;
+}
+textarea#src{
+  flex:1; resize:none; border:0; outline:none; padding:12px 12px 12px 10px;
+  background:var(--graphite); color:#d3dae2; caret-color:var(--signal);
+  font-family:var(--mono); font-size:12.5px; line-height:19px; tab-size:2;
+  overflow:auto; white-space:pre; scrollbar-width:thin;
+}
+.errbar{
+  padding:7px 12px; font-size:11.5px; color:#f0b4b4; background:#2a1c1c;
+  border-top:1px solid #4a2a2a; display:none; white-space:pre-wrap;
+}
+.errbar.on{display:block}
+
+.controls{border-top:1px solid var(--rule); overflow-y:auto; flex:0 0 auto; max-height:46%}
+.grp{padding:10px 12px; border-bottom:1px solid var(--rule)}
+.grp h4{margin:0 0 8px; font-size:10.5px; letter-spacing:.1em; color:var(--dim); font-weight:500}
+.row{display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:7px}
+.row:last-child{margin-bottom:0}
+.row label{font-size:12px; color:var(--mid); flex:0 0 auto}
+.row select, .row input[type=number]{flex:1 1 auto; min-width:0; max-width:190px}
+.row input[type=number]{max-width:82px; cursor:text}
+input[type=range]{flex:1; accent-color:var(--signal); min-width:0}
+.val{font-size:11.5px; color:var(--trace); min-width:34px; text-align:right}
+.check{display:flex; align-items:center; gap:8px; cursor:pointer; font-size:12px; color:var(--mid)}
+.check input{accent-color:var(--signal); cursor:pointer; margin:0}
+.hint{font-size:11px; color:var(--dim); line-height:1.55; margin:8px 0 0}
+.hint code{color:var(--mid); background:var(--panel); padding:1px 4px; border-radius:3px; font-size:10.5px}
+
+/* ---------- canvas ---------- */
+.stage{display:flex; flex-direction:column; min-width:0; min-height:320px; background:var(--graphite)}
+.panes{flex:1; display:flex; min-height:0}
+.pane{flex:1; min-width:0; position:relative; display:flex; flex-direction:column}
+.pane + .pane{border-left:1px solid var(--rule)}
+.pane-tag{
+  position:absolute; top:8px; left:8px; z-index:3; pointer-events:none;
+  font-size:10px; letter-spacing:.08em; color:#5c6672;
+  background:rgba(244,242,237,.86); border:1px solid #d9d5cb; border-radius:3px; padding:2px 7px;
+}
+#compare{display:none}
+#compare.on{display:flex}
+#cmpview{
+  flex:1; min-height:0; overflow:hidden; background:var(--vellum); position:relative;
+  background-image:radial-gradient(#d6d2c8 1px, transparent 1px); background-size:22px 22px;
+}
+#cmpview svg{width:100%; height:100%; display:block}
+.cmp-msg{
+  position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+  text-align:center; padding:24px; color:#6a7480; font-size:12px; line-height:1.7;
+}
+.cmp-msg b{color:#3f4650; font-weight:500; display:block; margin-bottom:6px}
+.effect{
+  font-size:10.5px; color:var(--trace); margin:-2px 0 8px; line-height:1.5;
+  padding-left:1px; min-height:15px;
+}
+.nochange{color:var(--dim)}
+.stage-head{
+  display:flex; align-items:center; gap:10px; padding:8px 12px;
+  border-bottom:1px solid var(--rule); font-size:11px; color:var(--dim);
+}
+.stage-head .spacer{flex:1}
+.zoombtn{padding:4px 9px; font-size:11px}
+#canvas{
+  flex:1; min-height:240px; overflow:hidden; position:relative;
+  background:var(--vellum); cursor:grab;
+  background-image:radial-gradient(#d6d2c8 1px, transparent 1px);
+  background-size:22px 22px;
+}
+#canvas.drag{cursor:grabbing}
+#canvas svg{position:absolute; top:0; left:0; width:100%; height:100%}
+.fl-node, .fl-edge{transition:transform .28s cubic-bezier(.4,0,.2,1), opacity .16s linear}
+.fl-node:hover > :first-child{stroke-width:2.4}
+
+/* ---------- readout: the instrument strip ---------- */
+.readout{
+  display:flex; align-items:stretch; gap:0; border-top:1px solid var(--rule);
+  background:var(--slate); overflow-x:auto; scrollbar-width:thin;
+}
+.metric{
+  padding:8px 14px; border-right:1px solid var(--rule); min-width:88px; flex:0 0 auto;
+}
+.metric .k{font-size:10px; letter-spacing:.09em; color:var(--dim); display:block}
+.metric .v{font-size:16px; color:var(--bright); font-weight:500; letter-spacing:-.01em}
+.metric .d{font-size:10.5px; margin-left:5px; opacity:0; transition:opacity .3s}
+.metric .d.on{opacity:1}
+.d.up{color:var(--bad)} .d.down{color:var(--good)} .d.flat{color:var(--dim)}
+.metric.lead{border-left:2px solid var(--signal)}
+
+@media (max-width:880px){
+  main{grid-template-columns:1fr; grid-template-rows:minmax(200px,40%) minmax(0,1fr)}
+  .side{border-right:0; border-bottom:1px solid var(--rule)}
+  .controls{max-height:none}
+  header{height:auto; flex-wrap:wrap; padding:10px 12px; gap:10px}
+}
+@media (prefers-reduced-motion:reduce){
+  .fl-node,.fl-edge,.metric .d{transition:none}
+}
+</style>
+</head>
+<body>
+
+<header>
+  <span class="mark">
+    <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
+      <rect x="6" y="1" width="6" height="4" fill="none" stroke="#4d9fe8" stroke-width="1.3"/>
+      <rect x="1" y="13" width="6" height="4" fill="none" stroke="#78828e" stroke-width="1.3"/>
+      <rect x="11" y="13" width="6" height="4" fill="none" stroke="#78828e" stroke-width="1.3"/>
+      <path d="M9 5v4H4v4M9 9h5v4" fill="none" stroke="#d99a2b" stroke-width="1.3"/>
+    </svg>
+    Flowchart Lab <small>· Sugiyama workbench</small>
+  </span>
+  <span class="spacer"></span>
+  <span class="exports">
+    <button id="ex-drawio" class="primary" title="Open directly in diagrams.net — shapes and routing preserved">.drawio</button>
+    <button id="ex-office" title="Flat SVG: insert in PowerPoint, then Convert to Shape">.svg for Office</button>
+    <button id="ex-svg" title="Styled SVG for the web">.svg</button>
+    <button id="ex-copy" title="Copy draw.io XML — paste via Extras &gt; Edit Diagram">copy xml</button>
+  </span>
+</header>
+
+<main>
+  <section class="side">
+    <div class="side-head">
+      <span>source</span>
+      <select id="preset" title="Load an example">
+        <option value="approval">approval flow</option>
+        <option value="chain">long chain (wrap demo)</option>
+        <option value="crossy">crossing stress</option>
+        <option value="state">retry state machine</option>
+        <option value="wide">wide fan</option>
+        <option value="incident">very long: incident response</option>
+      </select>
+    </div>
+    <div class="editor-wrap">
+      <div class="gutter" id="gutter">1</div>
+      <textarea id="src" spellcheck="false" aria-label="Flowchart source"></textarea>
+    </div>
+    <div class="errbar" id="err"></div>
+
+    <div class="controls">
+      <div class="grp">
+        <h4>pipeline</h4>
+        <div class="row">
+          <label for="layering">layering</label>
+          <select id="layering">
+            <option value="network-simplex">network simplex</option>
+            <option value="longest-path">longest path</option>
+            <option value="coffman-graham">coffman-graham</option>
+          </select>
+        </div>
+        <div class="row" id="cgrow" style="display:none">
+          <label for="cgw">max width</label>
+          <input type="number" id="cgw" min="1" max="12" value="4">
+        </div>
+        <div class="row">
+          <label class="check"><input type="checkbox" id="promote" checked> node promotion</label>
+        </div>
+        <div class="row">
+          <label for="iters">order passes</label>
+          <input type="range" id="iters" min="0" max="40" value="24">
+          <span class="val" id="itersv">24</span>
+        </div>
+        <p class="effect" id="fx-layering"></p>
+        <p class="effect" id="fx-iters"></p>
+      </div>
+
+      <div class="grp">
+        <h4>shape</h4>
+        <div class="row">
+          <label for="dir">direction</label>
+          <select id="dir">
+            <option value="">from source</option>
+            <option value="TB">top to bottom</option>
+            <option value="LR">left to right</option>
+            <option value="BT">bottom to top</option>
+            <option value="RL">right to left</option>
+          </select>
+        </div>
+        <div class="row">
+          <label for="routing">edge routing</label>
+          <select id="routing">
+            <option value="orthogonal">orthogonal</option>
+            <option value="polyline">polyline</option>
+            <option value="spline">spline</option>
+          </select>
+        </div>
+        <div class="row"><label for="nodeSep">node gap</label>
+          <input type="range" id="nodeSep" min="16" max="120" value="44"><span class="val" id="nodeSepv">44</span></div>
+        <div class="row"><label for="rankSep">rank gap</label>
+          <input type="range" id="rankSep" min="24" max="160" value="56"><span class="val" id="rankSepv">56</span></div>
+        <p class="effect" id="fx-routing"></p>
+      </div>
+
+      <div class="grp">
+        <h4>wrapping</h4>
+        <div class="row">
+          <label class="check"><input type="checkbox" id="wrap"> cut and stack</label>
+        </div>
+        <div class="row">
+          <label for="ar">target ratio</label>
+          <input type="range" id="ar" min="0.4" max="4" step="0.1" value="1.6">
+          <span class="val" id="arv">1.6</span>
+        </div>
+        <p class="effect" id="fx-wrap"></p>
+      </div>
+    </div>
+  </section>
+
+  <section class="stage">
+    <div class="stage-head">
+      <label for="engine" style="color:var(--dim)">compare with</label>
+      <select id="engine" style="font-size:11px; padding:3px 6px">
+        <option value="none">nothing</option>
+        <option value="mermaid">mermaid (dagre)</option>
+        <option value="mermaid-elk">mermaid (ELK)</option>
+      </select>
+      <span id="cmpstat" style="color:var(--dim)"></span>
+      <span class="spacer"></span>
+      <span id="zoomlabel">100%</span>
+      <button class="zoombtn" id="zin">+</button>
+      <button class="zoombtn" id="zout">−</button>
+      <button class="zoombtn" id="zfit">fit</button>
+    </div>
+    <div class="panes">
+      <div class="pane">
+        <span class="pane-tag" id="tag-a">this engine</span>
+        <div id="canvas" tabindex="0" role="img" aria-label="Rendered flowchart"></div>
+      </div>
+      <div class="pane" id="compare">
+        <span class="pane-tag" id="tag-b">mermaid</span>
+        <div id="cmpview"></div>
+      </div>
+    </div>
+    <div class="readout" id="readout"></div>
+  </section>
+</main>
+
+
+<script src="engine.js"></script>
+<script src="exporters.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
