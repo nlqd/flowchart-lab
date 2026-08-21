@@ -440,6 +440,79 @@
              freedByFAS: Object.keys(freed).length };
   }
 
+  /* A cut-down Adaptive Constrained Alignment.
+
+     Stress plus a flow constraint does not produce a flowchart on its own: the
+     optimiser wants nodes k hops apart to sit k*hop apart in Euclidean distance,
+     the flow gap only supplies part of that vertically, and x quietly makes up the
+     difference, which shears a deep chain into a diagonal ribbon.  Rüegg et al. run
+     full ACA after stress for exactly this reason.  This is the cheap version: take
+     the DAG edges already closest to vertical and merge their endpoints into one
+     alignment group sharing a single x, skipping any merge that would stack two
+     group members on top of each other. */
+  function alignEdges(nodes, edges, opts, host) {
+    var o = opts || {};
+    var axis = o.axis === 'x' ? 'x' : 'y';       // flow axis
+    var across = axis === 'y' ? 'x' : 'y';
+    var extent = axis === 'y' ? 'h' : 'w';
+    var tol = o.tol === undefined ? 90 : o.tol;
+    var idx = {}, i;
+    for (i = 0; i < nodes.length; i++) idx[nodes[i].id] = i;
+
+    var work = [];
+    edges.forEach(function (e) {
+      if (idx[e.from] === undefined || idx[e.to] === undefined || e.from === e.to) return;
+      work.push({ from: e.from, to: e.to });
+    });
+    var freed = {};
+    if (host && host.greedyFAS) {
+      host.greedyFAS(nodes.map(function (nd) { return nd.id; }), work);
+      work.forEach(function (e, k) { if (e.reversed) freed[k] = true; });
+    }
+
+    var parent = nodes.map(function (_, k) { return k; });
+    function find(a) { while (parent[a] !== a) { parent[a] = parent[parent[a]]; a = parent[a]; } return a; }
+
+    var cand = [];
+    work.forEach(function (e, k) {
+      if (freed[k]) return;
+      var u = idx[e.from], v = idx[e.to];
+      cand.push({ u: u, v: v, gap: Math.abs(nodes[u][across] - nodes[v][across]) });
+    });
+    cand.sort(function (a, b) { return a.gap - b.gap; });
+
+    var members = {};
+    for (i = 0; i < nodes.length; i++) members[i] = [i];
+    var merged = 0;
+    cand.forEach(function (c) {
+      if (c.gap > tol) return;
+      var ru = find(c.u), rv = find(c.v);
+      if (ru === rv) return;
+      var gu = members[ru], gv = members[rv], ok = true;
+      for (var a = 0; a < gu.length && ok; a++) {
+        for (var b = 0; b < gv.length; b++) {
+          var p = nodes[gu[a]], q = nodes[gv[b]];
+          if (Math.abs(p[axis] - q[axis]) < (p[extent] + q[extent]) / 2 + 8) { ok = false; break; }
+        }
+      }
+      if (!ok) return;
+      parent[rv] = ru;
+      members[ru] = gu.concat(gv);
+      delete members[rv];
+      merged++;
+    });
+
+    Object.keys(members).forEach(function (g) {
+      var m = members[g];
+      if (m.length < 2) return;
+      var sum = 0;
+      m.forEach(function (k) { sum += nodes[k][across]; });
+      var avg = sum / m.length;
+      m.forEach(function (k) { nodes[k][across] = avg; });
+    });
+    return { merged: merged };
+  }
+
   /* Straight-line crossings, so the two workbenches can be scored on the same
      number.  Edges sharing an endpoint meet there by construction and are not
      counted as a crossing. */
@@ -476,6 +549,8 @@
     flow: 'none',         // none | TB | LR
     flowGap: 70,
     overlapPad: 10,
+    align: true,
+    alignTol: 90,
     removeOverlaps: true
   };
 
@@ -572,6 +647,7 @@
         }));
       }
       flowInfo = enforceFlow(nodes, edges, { axis: flowAxis, gap: o.flowGap }, host);
+      if (o.align) alignEdges(nodes, edges, { axis: flowAxis, tol: o.alignTol }, host);
     }
 
     /* Stage three: separate the boxes.  The two projections can undo one another, so
@@ -691,7 +767,7 @@
     _rng: rng, allPairs: allPairs, bridgeComponents: bridgeComponents,
     stress: stress, schedule: schedule, run: run,
     removeOverlaps: removeOverlaps, countOverlaps: countOverlaps,
-    enforceFlow: enforceFlow, countCrossings: countCrossings,
+    enforceFlow: enforceFlow, alignEdges: alignEdges, countCrossings: countCrossings,
     layout: layout, DEFAULTS: DEFAULTS,
     majorize: majorize, fruchtermanReingold: fruchtermanReingold, snapTFDP: snapTFDP
   };

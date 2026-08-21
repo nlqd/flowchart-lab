@@ -34,6 +34,7 @@ function opts(){
     seed: +$('seed').value,
     flow: $('flow').value,
     flowGap: +$('flowGap').value,
+    align: $('align').checked,
     overlapPad: +$('overlapPad').value,
     removeOverlaps: $('noOverlap').checked
   };
@@ -106,6 +107,14 @@ function updateEffects(L){
         ? L.stats.backward + ' edge(s) still point backwards. Those sit on cycles, and no ordering can satisfy them.'
         : 'Every edge points along the flow axis.'));
 
+  setFx('fx-align', !$('align').checked
+    ? 'Off. Stress wants two nodes k hops apart to sit k hop-lengths apart in a straight '
+    + 'line; the flow gap only supplies part of that vertically, so the rest leaks into x '
+    + 'and a deep chain shears into a diagonal.'
+    : 'Edges already close to vertical are merged into a shared column, after Rüegg et al.\u2019s '
+    + 'alignment step. It straightens short chains. It does not rescue a deep one: see the '
+    + 'Sugiyama pane for what a layered pipeline does with the same graph.');
+
   setFx('fx-overlap', !$('noOverlap').checked
     ? 'Off. The stress model treats a node as a point, so boxes will sit on top of each other.'
     : (L.stats.overlaps
@@ -139,7 +148,7 @@ function run(immediate){
 }
 
 /* ---------- wiring ---------- */
-['optimiser','flow','noOverlap'].forEach(function(id){
+['optimiser','flow','noOverlap','align'].forEach(function(id){
   $(id).addEventListener('change',function(){ run(true); });
 });
 [['epochs','epochsv'],['edgeLength','edgeLengthv'],['seed','seedv'],

@@ -87,6 +87,26 @@ published version of this same idea:
 - Box separation is after Gansner & Hu's PRISM, which measures itself on how little it disturbs
   the layout it was handed.
 
+### Where this engine is a poor fit
+
+On a deep, chain-like graph, constrained stress does not produce a flowchart, and the
+`very long: incident response` preset shows it plainly. The reason is arithmetic rather than a
+bug. Stress wants two nodes `k` hops apart to sit `k × hop` apart in a straight line. The flow
+gap only supplies part of that vertically, so the remainder leaks into `x`, and a chain 21 hops
+deep gets sheared into a diagonal ribbon that wastes the canvas.
+
+Measured on that preset: the flow projection moves the median node 317px away from where the
+optimiser put it, against 8px for box separation. Retuning the two gaps, making ideal distances
+node-size aware, projecting the constraint symmetrically, and re-optimising `x` against the
+fixed `y` were all tried; none removes the shear. The `straighten chains` toggle, a cut-down
+version of Rüegg et al.'s alignment step, takes near-vertical edges up from 2 of 50 to 14 of 50
+and genuinely helps the shallower graphs, but does not rescue a deep one.
+
+This is the family's known limit rather than a defect in the implementation: nothing in a
+stress model encodes a reading order, and bolting one on has a cost that grows with depth. The
+Sugiyama pane beside it assigns discrete ranks and so does not pay it. Switch the compare pane
+on and the difference is the honest answer to which engine suits which graph.
+
 The reported stress is measured on the drawing as rendered, after every constraint pass, not on
 the optimiser's internal state. It is therefore higher than the raw stress the optimiser
 reaches, and it is the number that actually describes the picture.
