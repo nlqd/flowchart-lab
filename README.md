@@ -94,6 +94,32 @@ reaches, and it is the number that actually describes the picture.
 Runs are seeded and deterministic. Changing the seed finds a different local minimum, which is
 the honest way to see how stable a given graph is.
 
+### The other optimisers
+
+The `method` dropdown swaps the optimiser and leaves everything else alone, so the constraint
+layer, the renderer and both exporters are identical across all four. Only the first two share
+an objective, which is the point of putting them together.
+
+| Method | Objective | Needs distances | Notes |
+|---|---|---|---|
+| stress / SGD | stress | yes | Zheng et al. Algorithm 1. No guarantee any epoch lowers stress. |
+| stress / majorization | the same stress | yes | Localized SMACOF. Every sweep provably lowers stress. |
+| fruchterman-reingold | none, a force balance | no | The 1991 spring embedder, `f_a = d²/k`, `f_r = k²/d`, kept as a baseline. |
+| SNAP-tFDP | none, a force balance | no | Chen et al., IEEE VIS 2026 ([arXiv:2608.01907](https://arxiv.org/pdf/2608.01907)), Algorithm 1. Edge-centric negative sampling, bounded Student-t repulsion. |
+
+Zheng et al. report SGD reaching lower stress than majorization in fewer iterations on 242 of
+243 test graphs. Having both here means you can check that on your own graph instead of taking
+it on faith, and at flowchart scale it does not always hold. The two implementations behave
+exactly as their theory predicts, which is the strongest evidence they are right: majorization
+never once raises stress, and SGD does so several times per run.
+
+The stress figure is still reported for the two force methods, but they were never trying to
+minimise it, so read it as a description rather than a score. Neither reports a per-epoch
+stress, so the convergence trace stays empty for them.
+
+The SNAP-tFDP force constants are chosen to suit flowchart-scale drawings; the paper tunes for
+graphs several orders of magnitude larger. The force *forms* are as published.
+
 `LAYOUT-ALGORITHMS.md` explains the Sugiyama choices, with pseudocode and measurements.
 
 ## Supported syntax

@@ -28,6 +28,7 @@ var METRICS = [
 
 function opts(){
   return {
+    optimiser: $('optimiser').value,
     epochs: +$('epochs').value,
     edgeLength: +$('edgeLength').value,
     seed: +$('seed').value,
@@ -42,7 +43,10 @@ function opts(){
 function drawSpark(trace){
   var svg = $('spark');
   while (svg.firstChild) svg.removeChild(svg.firstChild);
-  if (!trace || trace.length < 2){ $('trace-note').textContent=''; return; }
+  if (!trace || trace.length < 2){
+    $('trace-note').textContent = 'not reported by this method';
+    return;
+  }
   var W = 300, H = 56, pad = 3;
   var vals = trace.map(function(t){ return t.stress; });
   var lo = Math.min.apply(null, vals), hi = Math.max.apply(null, vals);
@@ -60,13 +64,29 @@ function drawSpark(trace){
   var line = U.el('polyline',{points:pts.join(' '), fill:'none', stroke:'#5fb37a',
     'stroke-width':1.4, 'stroke-linejoin':'round', 'vector-effect':'non-scaling-stroke'});
   svg.appendChild(area); svg.appendChild(line);
-  $('trace-note').textContent = vals.length + ' epochs, ' + hi.toFixed(1) + ' → ' + lo.toFixed(2);
+  $('trace-note').textContent = vals.length + ' epochs, ' + hi.toFixed(1) + ' \u2192 ' + lo.toFixed(2);
 }
 
 /* ---------- what each control does ---------- */
 function setFx(id, text){ var e=$(id); if(e){ e.textContent=text||''; e.className='effect'; } }
+var OPT_FX = {
+  sgd: 'Zheng, Pawar & Goodman, Algorithm 1. Visits every vertex pair once per epoch '
+     + 'and moves only the two vertices involved. No solver, and no guarantee that any '
+     + 'single epoch lowers stress.',
+  majorization: 'The same stress objective, solved by relocating one vertex at a time to '
+     + 'the weighted average its neighbours want. Every sweep is guaranteed to lower '
+     + 'stress, which SGD cannot promise. Compare the two curves on your own graph.',
+  fr: 'Fruchterman-Reingold, 1991. Pulls along edges, pushes everything else apart, and '
+    + 'never computes graph distance at all, so the stress reading here is a score it was '
+    + 'never trying to win.',
+  snap: 'SNAP-tFDP (IEEE VIS 2026). Walks the edge list and pushes each tail away from a '
+      + 'few random non-neighbours, so degree weighting falls out of the sampling. Also '
+      + 'ignores graph distance, and its forces are bounded at short range.'
+};
+
 function updateEffects(L){
   var t = L.trace || [];
+  setFx('fx-optimiser', OPT_FX[$('optimiser').value] || '');
   var settleAt = -1;
   if (t.length > 2){
     var fin = t[t.length-1].stress;
@@ -74,7 +94,8 @@ function updateEffects(L){
   }
   setFx('fx-epochs', settleAt >= 0
     ? 'Stress is within 2% of its final value by epoch ' + settleAt + '; the rest is polish.'
-    : 'Each epoch visits every vertex pair once, in a fresh random order.');
+    : (t.length ? 'Each epoch visits every vertex pair once, in a fresh random order.'
+                : 'This method reports no per-epoch stress, so the trace below stays empty.'));
 
   setFx('fx-seed', 'The optimiser starts from a random layout. Changing the seed finds a '
     + 'different local minimum, which is the honest way to see how stable this graph is.');
@@ -118,7 +139,7 @@ function run(immediate){
 }
 
 /* ---------- wiring ---------- */
-['flow','noOverlap'].forEach(function(id){
+['optimiser','flow','noOverlap'].forEach(function(id){
   $(id).addEventListener('change',function(){ run(true); });
 });
 [['epochs','epochsv'],['edgeLength','edgeLengthv'],['seed','seedv'],

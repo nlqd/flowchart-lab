@@ -156,6 +156,161 @@
   }
 
   /* ------------------------------------------------------------------ *
+   * alternative optimisers
+   *
+   * All four write the same X array, so the constraint layer, the renderer and
+   * both exporters are unchanged whichever one ran.  Only the first two share an
+   * objective; that is the point of having them side by side.
+   * ------------------------------------------------------------------ */
+
+  /* Stress majorization, the localized (Gauss-Seidel) form of SMACOF.  Same
+     objective as SGD above, different optimiser: it relocates one vertex at a time
+     to the weighted average its neighbours want, which is guaranteed to decrease
+     stress every sweep.  SGD gives no such guarantee but Zheng et al. report it
+     reaching lower stress in fewer iterations, and with both in the same workbench
+     you can check that on your own graph rather than taking their word for it. */
+  function majorize(d, n, opts) {
+    var o = opts || {};
+    var iters = o.epochs === undefined ? 30 : o.epochs;
+    var rand = rng(o.seed === undefined ? 1 : o.seed);
+    var X = o.init ? o.init.slice() : (function () {
+      var a = new Float64Array(2 * n);
+      // start at the scale of the data, not in a unit square: majorization has no
+      // annealing schedule to grow the drawing out of a tiny random blob
+      var spread = 0;
+      for (var k = 0; k < n * n; k++) if (d[k] > spread) spread = d[k];
+      for (var i = 0; i < 2 * n; i++) a[i] = (rand() - 0.5) * spread;
+      return a;
+    })();
+    var trace = [];
+    for (var it = 0; it < iters; it++) {
+      for (var i = 0; i < n; i++) {
+        var nx = 0, ny = 0, den = 0;
+        for (var j = 0; j < n; j++) {
+          if (j === i) continue;
+          var dij = d[i * n + j];
+          if (!dij) continue;
+          var w = 1 / (dij * dij);
+          var dx = X[2 * i] - X[2 * j], dy = X[2 * i + 1] - X[2 * j + 1];
+          var mag = Math.sqrt(dx * dx + dy * dy);
+          if (mag < 1e-9) { dx = rand() - 0.5; dy = rand() - 0.5; mag = Math.sqrt(dx * dx + dy * dy); }
+          nx += w * (X[2 * j] + dij * dx / mag);
+          ny += w * (X[2 * j + 1] + dij * dy / mag);
+          den += w;
+        }
+        if (den > 0) { X[2 * i] = nx / den; X[2 * i + 1] = ny / den; }
+      }
+      trace.push({ epoch: it, eta: 0, stress: stress(X, d, n) });
+    }
+    return { X: X, trace: trace };
+  }
+
+  /* Fruchterman & Reingold 1991: the classic spring embedder, kept as a baseline.
+     It never computes graph distances at all, only pulls along edges and pushes
+     everything else apart, which is exactly why its drawings say less about global
+     structure than a stress layout does. */
+  function fruchtermanReingold(n, adjList, opts) {
+    var o = opts || {};
+    var iters = o.epochs === undefined ? 300 : o.epochs;
+    var rand = rng(o.seed === undefined ? 1 : o.seed);
+    var side = (o.ideal || 100) * Math.sqrt(n);
+    var k = side / Math.sqrt(n);
+    var X = new Float64Array(2 * n);
+    for (var i = 0; i < 2 * n; i++) X[i] = (rand() - 0.5) * side;
+    var dispX = new Float64Array(n), dispY = new Float64Array(n);
+    var temp = side / 10, cool = temp / (iters + 1);
+    var trace = [];
+    for (var it = 0; it < iters; it++) {
+      for (i = 0; i < n; i++) { dispX[i] = 0; dispY[i] = 0; }
+      for (i = 0; i < n; i++) {
+        for (var j = i + 1; j < n; j++) {
+          var dx = X[2 * i] - X[2 * j], dy = X[2 * i + 1] - X[2 * j + 1];
+          var mag = Math.sqrt(dx * dx + dy * dy);
+          if (mag < 1e-6) { dx = rand() - 0.5; dy = rand() - 0.5; mag = Math.sqrt(dx * dx + dy * dy); }
+          var rep = (k * k) / mag;               // f_r = k^2 / d
+          var ux = dx / mag * rep, uy = dy / mag * rep;
+          dispX[i] += ux; dispY[i] += uy;
+          dispX[j] -= ux; dispY[j] -= uy;
+        }
+      }
+      for (i = 0; i < n; i++) {
+        for (var e = 0; e < adjList[i].length; e++) {
+          var t = adjList[i][e];
+          if (t <= i) continue;
+          var ex = X[2 * i] - X[2 * t], ey = X[2 * i + 1] - X[2 * t + 1];
+          var em = Math.sqrt(ex * ex + ey * ey) || 1e-6;
+          var att = (em * em) / k;               // f_a = d^2 / k
+          var ax = ex / em * att, ay = ey / em * att;
+          dispX[i] -= ax; dispY[i] -= ay;
+          dispX[t] += ax; dispY[t] += ay;
+        }
+      }
+      for (i = 0; i < n; i++) {
+        var dm = Math.sqrt(dispX[i] * dispX[i] + dispY[i] * dispY[i]) || 1e-9;
+        var lim = Math.min(dm, temp) / dm;
+        X[2 * i] += dispX[i] * lim; X[2 * i + 1] += dispY[i] * lim;
+      }
+      temp -= cool;
+      if (temp < 0) temp = 0;
+    }
+    return { X: X, trace: trace };
+  }
+
+  /* SNAP-tFDP (Chen et al., IEEE VIS 2026, arXiv:2608.01907), Algorithm 1.
+     Edge-centric: walk the edge list, pull each edge together, then push the tail
+     away from k uniformly sampled non-neighbours.  Degree weighting falls out of the
+     sampling rather than being computed.  It never builds a distance matrix, so it
+     is the one optimiser here that says nothing about global graph distance, and
+     that is the interesting contrast.
+
+     The paper's force pair, from its own comparison table: attraction linear in
+     distance, repulsion the bounded Student-t form  -r / (1 + r^2)^gamma.  The
+     constants below are chosen to suit flowchart-scale drawings; the paper tunes
+     for graphs several orders of magnitude larger. */
+  function snapTFDP(n, edgeList, opts) {
+    var o = opts || {};
+    var epochs = o.epochs === undefined ? 60 : o.epochs;
+    var k = o.negatives === undefined ? 5 : o.negatives;
+    var gamma = o.gamma === undefined ? 1 : o.gamma;
+    var scale = o.ideal || 100;
+    var rand = rng(o.seed === undefined ? 1 : o.seed);
+    var X = new Float64Array(2 * n);
+    for (var i = 0; i < 2 * n; i++) X[i] = (rand() - 0.5) * scale * Math.sqrt(n);
+    // each undirected edge travels in both directions, so both endpoints get the
+    // same treatment; the paper is explicit about this
+    var E = [];
+    edgeList.forEach(function (e) { E.push([e[0], e[1]]); E.push([e[1], e[0]]); });
+    if (!E.length) return { X: X, trace: [] };
+    var eta0 = scale * 0.12;
+    for (var t = 0; t < epochs; t++) {
+      var eta = eta0 * (1 - t / epochs);
+      for (var s = E.length - 1; s > 0; s--) {
+        var r = (rand() * (s + 1)) | 0;
+        var tmp = E[s]; E[s] = E[r]; E[r] = tmp;
+      }
+      for (var m = 0; m < E.length; m++) {
+        var a = E[m][0], b = E[m][1];
+        var dx = X[2 * b] - X[2 * a], dy = X[2 * b + 1] - X[2 * a + 1];
+        var mag = Math.sqrt(dx * dx + dy * dy) || 1e-6;
+        var fa = eta * (mag / scale);                       // attraction, linear in r
+        X[2 * a] += dx / mag * fa; X[2 * a + 1] += dy / mag * fa;
+        X[2 * b] -= dx / mag * fa; X[2 * b + 1] -= dy / mag * fa;
+        for (var q = 0; q < k; q++) {
+          var sIdx = (rand() * n) | 0;
+          if (sIdx === a) continue;
+          var rx = X[2 * a] - X[2 * sIdx], ry = X[2 * a + 1] - X[2 * sIdx + 1];
+          var rm = Math.sqrt(rx * rx + ry * ry) || 1e-6;
+          var u = rm / scale;
+          var fr = eta * (u / Math.pow(1 + u * u, gamma));  // bounded Student-t
+          X[2 * a] += rx / rm * fr; X[2 * a + 1] += ry / rm * fr;
+          X[2 * sIdx] -= rx / rm * fr; X[2 * sIdx + 1] -= ry / rm * fr;
+        }
+      }
+    }
+    return { X: X, trace: [] };
+  }
+
+  /* ------------------------------------------------------------------ *
    * constraint layer
    *
    * Nothing above knows a node is a box or that an edge points somewhere.
@@ -313,6 +468,7 @@
    * both exporters work against either one unchanged
    * ------------------------------------------------------------------ */
   var DEFAULTS = {
+    optimiser: 'sgd',     // sgd | majorization | fr | snap
     epochs: 30,
     epsilon: 0.1,
     seed: 1,
@@ -368,7 +524,21 @@
        first, then add flow while overlaps are still allowed so nodes can float past
        each other and swap, and only then separate the boxes.  Applying non-overlap
        any earlier freezes whatever ordering the first pass happened to land on. */
-    var res = run(d, n, { epochs: o.epochs, epsilon: o.epsilon, seed: o.seed });
+    var res;
+    if (o.optimiser === 'majorization') {
+      res = majorize(d, n, { epochs: o.epochs, seed: o.seed });
+    } else if (o.optimiser === 'fr') {
+      res = fruchtermanReingold(n, adj, { epochs: Math.max(40, o.epochs * 10), seed: o.seed, ideal: o.edgeLength });
+    } else if (o.optimiser === 'snap') {
+      var elist = [];
+      edges.forEach(function (e) {
+        var a = idx[e.from], b = idx[e.to];
+        if (a !== undefined && b !== undefined && a !== b) elist.push([a, b]);
+      });
+      res = snapTFDP(n, elist, { epochs: Math.max(20, o.epochs * 2), seed: o.seed, ideal: o.edgeLength });
+    } else {
+      res = run(d, n, { epochs: o.epochs, epsilon: o.epsilon, seed: o.seed });
+    }
     var trace = res.trace.slice();
     for (i = 0; i < n; i++) { nodes[i].x = res.X[2 * i]; nodes[i].y = res.X[2 * i + 1]; }
 
@@ -391,7 +561,11 @@
         flowInfo = enforceFlow(nodes, edges, { axis: flowAxis, gap: o.flowGap }, host);
         var cur = new Float64Array(2 * n);
         for (i = 0; i < n; i++) { cur[2 * i] = nodes[i].x; cur[2 * i + 1] = nodes[i].y; }
-        var refine = run(d, n, { init: cur, etas: relax, seed: o.seed + 101 + r });
+        var refine = (o.optimiser === 'majorization')
+          ? majorize(d, n, { init: cur, epochs: 2, seed: o.seed + 101 + r })
+          : (o.optimiser === 'sgd'
+              ? run(d, n, { init: cur, etas: relax, seed: o.seed + 101 + r })
+              : { X: cur, trace: [] });   // fr and snap have no constrained resume
         for (i = 0; i < n; i++) { nodes[i].x = refine.X[2 * i]; nodes[i].y = refine.X[2 * i + 1]; }
         trace = trace.concat(refine.trace.map(function (t, k) {
           return { epoch: trace.length + k, eta: t.eta, stress: t.stress };
@@ -502,6 +676,7 @@
         overlaps: countOverlaps(nodes, 0),
         diameter: comp.diameter,
         epochs: o.epochs,
+        optimiser: o.optimiser,
         backward: backward,
         width: Math.round(W), height: Math.round(H),
         ar: +(W / Math.max(1, H)).toFixed(2),
@@ -517,6 +692,7 @@
     stress: stress, schedule: schedule, run: run,
     removeOverlaps: removeOverlaps, countOverlaps: countOverlaps,
     enforceFlow: enforceFlow, countCrossings: countCrossings,
-    layout: layout, DEFAULTS: DEFAULTS
+    layout: layout, DEFAULTS: DEFAULTS,
+    majorize: majorize, fruchtermanReingold: fruchtermanReingold, snapTFDP: snapTFDP
   };
 });

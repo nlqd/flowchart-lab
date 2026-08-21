@@ -70,6 +70,15 @@
       <div class="grp">
         <h4>optimiser</h4>
         <div class="row">
+          <label for="optimiser">method</label>
+          <select id="optimiser">
+            <option value="sgd">stress / SGD</option>
+            <option value="majorization">stress / majorization</option>
+            <option value="fr">fruchterman-reingold</option>
+            <option value="snap">SNAP-tFDP</option>
+          </select>
+        </div>
+        <div class="row">
           <label for="epochs">epochs</label>
           <input type="range" id="epochs" min="1" max="80" value="30">
           <span class="val" id="epochsv">30</span>
@@ -84,6 +93,7 @@
           <input type="range" id="seed" min="1" max="40" value="1">
           <span class="val" id="seedv">1</span>
         </div>
+        <p class="effect" id="fx-optimiser"></p>
         <p class="effect" id="fx-epochs"></p>
         <p class="effect" id="fx-seed"></p>
       </div>
