@@ -186,10 +186,9 @@ input[type=range]{flex:1; accent-color:var(--signal); min-width:0}
   </span>
   <span class="spacer"></span>
   <span class="exports">
-    <button id="ex-drawio" class="primary" title="Open directly in diagrams.net — shapes and routing preserved">.drawio</button>
-    <button id="ex-office" title="Flat SVG: insert in PowerPoint, then Convert to Shape">.svg for Office</button>
-    <button id="ex-svg" title="Styled SVG for the web">.svg</button>
-    <button id="ex-copy" title="Copy draw.io XML — paste via Extras &gt; Edit Diagram">copy xml</button>
+    <button id="ex-drawio" class="primary" title="draw.io XML on the clipboard — paste into diagrams.net via Extras &gt; Edit Diagram">copy .drawio</button>
+    <button id="ex-office" title="Flat SVG on the clipboard — paste into PowerPoint, then Convert to Shape">copy .svg for Office</button>
+    <button id="ex-svg" title="Styled SVG on the clipboard, for the web">copy .svg</button>
   </span>
 </header>
 
@@ -1496,19 +1495,59 @@ input[type=range]{flex:1; accent-color:var(--signal); min-width:0}
   /* ------------------------------------------------------------------ *
    * geometry
    * ------------------------------------------------------------------ */
+  /* How far along the ray (dx,dy) from the centre the outline sits, for shapes whose
+     silhouette is a polygon.  Points are centre-relative, in order. */
+  function rayToPolygon(dx, dy, pts) {
+    var best = Infinity;
+    for (var i = 0; i < pts.length; i++) {
+      var p = pts[i], q = pts[(i + 1) % pts.length];
+      var ex = q[0] - p[0], ey = q[1] - p[1];
+      var den = dx * ey - dy * ex;
+      if (Math.abs(den) < 1e-9) continue;
+      var t = (p[0] * ey - p[1] * ex) / den;
+      var u = (p[0] * dy - p[1] * dx) / den;
+      if (t > 0 && u >= 0 && u <= 1) best = Math.min(best, t);
+    }
+    return isFinite(best) ? best : 1;
+  }
+
+  /* A cylinder is a box with an elliptical cap dished into each end, so near the left
+     and right of the top face the outline sits well below the bounding box.  Clipping
+     to the box there leaves the arrow floating in the gap. */
+  function rayToCylinder(dx, dy, hw, hh, e) {
+    var tSide = Math.abs(hw / (dx || 1e-9));
+    if (Math.abs(dy * tSide) <= hh - e) return tSide;
+    var c = (dy < 0 ? -1 : 1) * (hh - e);
+    var A = (dx * dx) / (hw * hw) + (dy * dy) / (e * e);
+    var B = -2 * dy * c / (e * e);
+    var C = (c * c) / (e * e) - 1;
+    var disc = B * B - 4 * A * C;
+    if (disc < 0) return tSide;
+    var root = (-B + Math.sqrt(disc)) / (2 * A);
+    return root > 0 ? root : tSide;
+  }
+
   function clipToShape(n, toward) {
     var dx = toward.x - n.x, dy = toward.y - n.y;
     if (dx === 0 && dy === 0) return { x: n.x, y: n.y + n.h / 2 };
-    var hw = n.w / 2, hh = n.h / 2, t;
+    var hw = n.w / 2, hh = n.h / 2, t, k;
     if (n.shape === 'circle' || n.shape === 'stadium' || n.shape === 'round') {
-      var a = hw, b = hh;
-      t = 1 / Math.sqrt((dx * dx) / (a * a) + (dy * dy) / (b * b));
+      t = 1 / Math.sqrt((dx * dx) / (hw * hw) + (dy * dy) / (hh * hh));
       if (n.shape !== 'circle') {
         var tr = Math.min(Math.abs(hw / (dx || 1e-9)), Math.abs(hh / (dy || 1e-9)));
         t = (t + tr) / 2;
       }
     } else if (n.shape === 'diamond') {
       t = 1 / (Math.abs(dx) / hw + Math.abs(dy) / hh);
+    } else if (n.shape === 'cylinder') {
+      t = rayToCylinder(dx, dy, hw, hh, Math.min(12, n.h / 4));
+    } else if (n.shape === 'hexagon') {
+      k = Math.min(18, n.w / 5);
+      t = rayToPolygon(dx, dy, [[-hw + k, -hh], [hw - k, -hh], [hw, 0],
+                                [hw - k, hh], [-hw + k, hh], [-hw, 0]]);
+    } else if (n.shape === 'parallelogram') {
+      k = Math.min(18, n.w / 5);
+      t = rayToPolygon(dx, dy, [[-hw + k, -hh], [hw, -hh], [hw - k, hh], [-hw, hh]]);
     } else {
       t = Math.min(Math.abs(hw / (dx || 1e-9)), Math.abs(hh / (dy || 1e-9)));
     }
@@ -1585,10 +1624,28 @@ input[type=range]{flex:1; accent-color:var(--signal); min-width:0}
       // above stays straight.  Push apart only as far as the minimum gap demands, then
       // slide the whole block back onto the face.  Spreading evenly regardless would
       // knock naturally-aligned edges into pointless diagonals.
-      var pos = [];
+      var wants = [], anchor = -1;
       for (var i = 0; i < count; i++) {
         var want = Math.max(-usable, Math.min(usable, list[i].ref - centre));
-        pos.push(i === 0 ? want : Math.max(want, pos[i - 1] + step));
+        if (Math.abs(want) <= 1) anchor = i;   // this edge already runs straight
+        // A departure and the arrival on the node directly across the gap are derived
+        // from the same two box positions, so they land on the same offset and share one
+        // corridor.  One run then sits on top of the other and a pair of crossing edges
+        // reads as a single forked line.  Pull arrivals in by half a port gap; an edge
+        // already running straight keeps its offset of zero and stays straight.
+        if (list[i].kind === 'in' && Math.abs(want) > 1) {
+          want -= (want > 0 ? 1 : -1) * Math.min(portGap / 2, Math.abs(want));
+        }
+        wants.push(want);
+      }
+      // Ports only have to stay far enough apart to read as separate; demanding the full
+      // port gap here is what used to drag a straight edge into a diagonal.
+      var minGap = Math.min(step, portGap * 0.45);
+      var pos = [];
+      for (i = 0; i < count; i++) pos.push(i === 0 ? wants[i] : Math.max(wants[i], pos[i - 1] + minGap));
+      if (anchor >= 0 && Math.abs(pos[anchor]) > 0.01) {
+        var slide = -pos[anchor];
+        for (i = 0; i < count; i++) pos[i] += slide;
       }
       var excess = pos[count - 1] - usable;
       if (excess > 0) for (i = 0; i < count; i++) pos[i] -= excess;
@@ -1786,16 +1843,28 @@ input[type=range]{flex:1; accent-color:var(--signal); min-width:0}
     return catmullRom(pts, pre, post);
   }
 
+  /* Centripetal parameterisation (alpha = 0.5), not uniform.  A long edge's dummy points
+     are spaced one rank apart while the stub off the source box is a few pixels, and
+     uniform Catmull-Rom answers that imbalance by overshooting: the curve bulges past the
+     corridor and lands back on it with a visible kink.  Weighting each segment by the
+     square root of its length is the standard cure, and it cannot cusp or self-intersect. */
   function catmullRom(pts, pre, post) {
     if (pts.length === 2) {
       return 'M' + f(pts[0].x) + ' ' + f(pts[0].y) + 'L' + f(pts[1].x) + ' ' + f(pts[1].y);
     }
     var p = [pre || pts[0]].concat(pts, [post || pts[pts.length - 1]]);
+    var t = [0];
+    for (var k = 1; k < p.length; k++) {
+      t.push(t[k - 1] + Math.max(1e-4, Math.sqrt(dist(p[k - 1], p[k]))));
+    }
     var d = 'M' + f(pts[0].x) + ' ' + f(pts[0].y);
     for (var i = 1; i + 2 < p.length; i++) {
       var p0 = p[i - 1], p1 = p[i], p2 = p[i + 1], p3 = p[i + 2];
-      var c1 = { x: p1.x + (p2.x - p0.x) / 6, y: p1.y + (p2.y - p0.y) / 6 };
-      var c2 = { x: p2.x - (p3.x - p1.x) / 6, y: p2.y - (p3.y - p1.y) / 6 };
+      var span = t[i + 1] - t[i];
+      var a = span / (3 * (t[i + 1] - t[i - 1]));
+      var b = span / (3 * (t[i + 2] - t[i]));
+      var c1 = { x: p1.x + (p2.x - p0.x) * a, y: p1.y + (p2.y - p0.y) * a };
+      var c2 = { x: p2.x - (p3.x - p1.x) * b, y: p2.y - (p3.y - p1.y) * b };
       d += 'C' + f(c1.x) + ' ' + f(c1.y) + ' ' + f(c2.x) + ' ' + f(c2.y) + ' ' + f(p2.x) + ' ' + f(p2.y);
     }
     return d;
@@ -2218,7 +2287,9 @@ function ensureSvg(){
   if (svgEl) return;
   svgEl = el('svg',{xmlns:NS});
   var defs = el('defs');
-  var m = el('marker',{id:'ar',viewBox:'0 0 10 10',refX:'9',refY:'5',
+  // namespaced: a bare id here collides with the controls in the markup, and a
+  // url(#id) that resolves to an <input> paints no arrowhead at all
+  var m = el('marker',{id:'fl-arrow',viewBox:'0 0 10 10',refX:'9',refY:'5',
     markerWidth:'7',markerHeight:'7',orient:'auto-start-reverse',markerUnits:'strokeWidth'});
   m.appendChild(el('path',{d:'M0 0 L10 5 L0 10 z',fill:'#5a626e'}));
   defs.appendChild(m); svgEl.appendChild(defs);
@@ -2262,7 +2333,7 @@ function render(L){
     p.setAttribute('stroke', '#5a626e');
     p.setAttribute('stroke-width', e.style==='thick'?2.6:1.5);
     if(e.style==='dashed') p.setAttribute('stroke-dasharray','6 4'); else p.removeAttribute('stroke-dasharray');
-    if(e.arrow==='none') p.removeAttribute('marker-end'); else p.setAttribute('marker-end','url(#ar)');
+    if(e.arrow==='none') p.removeAttribute('marker-end'); else p.setAttribute('marker-end','url(#fl-arrow)');
   });
 
   L.edges.forEach(function(e){
@@ -2563,38 +2634,65 @@ $('engine').addEventListener('change', function(){
 });
 
 /* ---------- export ---------- */
-function download(name, text, mime){
-  var b=new Blob([text],{type:mime}), u=URL.createObjectURL(b);
-  var a=document.createElement('a'); a.href=u; a.download=name; a.click();
-  setTimeout(function(){URL.revokeObjectURL(u);},1500);
-}
 function flash(btn,msg){
-  var t=btn.textContent; btn.textContent=msg;
-  setTimeout(function(){btn.textContent=t;},1300);
+  if(btn.dataset.restore) clearTimeout(+btn.dataset.restore);
+  else btn.dataset.label = btn.textContent;
+  btn.textContent = msg;
+  btn.dataset.restore = setTimeout(function(){
+    btn.textContent = btn.dataset.label; delete btn.dataset.restore;
+  },1300);
 }
-$('ex-svg').onclick=function(){
+
+/* Chrome's async clipboard only accepts text/plain, text/html and image/png natively;
+   image/svg+xml is refused outright. Anything else has to travel as a "web " custom
+   format, which only web apps that opt in can read. So the payload always goes on
+   text/plain, which is what draw.io's Edit Diagram box, editors, and paste-as-text all
+   read, and the typed copy rides along for whatever can use it. */
+function copyOut(btn, text, webType){
+  function attempt(withTyped){
+    if (!(window.ClipboardItem && navigator.clipboard && navigator.clipboard.write)) {
+      return navigator.clipboard && navigator.clipboard.writeText
+        ? navigator.clipboard.writeText(text) : Promise.reject();
+    }
+    var reps = {'text/plain': new Blob([text], {type:'text/plain'})};
+    if (withTyped && webType) reps[webType] = new Blob([text], {type:webType});
+    try { return navigator.clipboard.write([new ClipboardItem(reps)]); }
+    catch (e) { return Promise.reject(e); }
+  }
+  // Chrome parks a clipboard write until the document regains focus, so the promise can
+  // sit pending forever and the button would never say anything. Cap the wait and let
+  // the synchronous fallback take over; writing the same text twice is harmless.
+  var settled = false;
+  function guard(p){
+    return new Promise(function(res, rej){
+      p.then(function(v){ if(!settled){ settled=true; res(v); } },
+             function(e){ if(!settled){ settled=true; rej(e); } });
+      setTimeout(function(){ if(!settled){ settled=true; rej(new Error('clipboard timeout')); } }, 1200);
+    });
+  }
+  guard(attempt(true).catch(function(){ return attempt(false); }))
+    .then(function(){ flash(btn,'copied'); })
+    .catch(function(){
+      var ta=document.createElement('textarea');
+      ta.value=text; ta.style.cssText='position:fixed;top:-1000px';
+      document.body.appendChild(ta); ta.select();
+      try { document.execCommand('copy'); flash(btn,'copied'); }
+      catch(e){ flash(btn,'copy failed'); }
+      ta.remove();
+    });
+}
+
+$('ex-drawio').onclick=function(){
   if(!last) return;
-  download('flowchart.svg', FlowExport.toSVG(last,{mode:'app'}), 'image/svg+xml');
+  copyOut(this, FlowExport.toDrawio(last,{routing:$('routing').value}), 'web application/xml');
 };
 $('ex-office').onclick=function(){
   if(!last) return;
-  download('flowchart-office.svg', FlowExport.toSVG(last,{mode:'flat'}), 'image/svg+xml');
+  copyOut(this, FlowExport.toSVG(last,{mode:'flat'}), 'web image/svg+xml');
 };
-$('ex-drawio').onclick=function(){
+$('ex-svg').onclick=function(){
   if(!last) return;
-  download('flowchart.drawio', FlowExport.toDrawio(last,{routing:$('routing').value}), 'application/xml');
-};
-$('ex-copy').onclick=function(){
-  if(!last) return;
-  var xml=FlowExport.toDrawio(last,{routing:$('routing').value});
-  var self=this;
-  (navigator.clipboard ? navigator.clipboard.writeText(xml) : Promise.reject())
-    .then(function(){ flash(self,'copied'); })
-    .catch(function(){
-      var ta=document.createElement('textarea'); ta.value=xml; document.body.appendChild(ta);
-      ta.select(); try{document.execCommand('copy'); flash(self,'copied');}catch(e){flash(self,'copy failed');}
-      ta.remove();
-    });
+  copyOut(this, FlowExport.toSVG(last,{mode:'app'}), 'web image/svg+xml');
 };
 
 window.addEventListener('resize',function(){ if(last && firstRun===false) applyView(); });

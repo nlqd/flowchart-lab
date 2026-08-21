@@ -1182,19 +1182,59 @@
   /* ------------------------------------------------------------------ *
    * geometry
    * ------------------------------------------------------------------ */
+  /* How far along the ray (dx,dy) from the centre the outline sits, for shapes whose
+     silhouette is a polygon.  Points are centre-relative, in order. */
+  function rayToPolygon(dx, dy, pts) {
+    var best = Infinity;
+    for (var i = 0; i < pts.length; i++) {
+      var p = pts[i], q = pts[(i + 1) % pts.length];
+      var ex = q[0] - p[0], ey = q[1] - p[1];
+      var den = dx * ey - dy * ex;
+      if (Math.abs(den) < 1e-9) continue;
+      var t = (p[0] * ey - p[1] * ex) / den;
+      var u = (p[0] * dy - p[1] * dx) / den;
+      if (t > 0 && u >= 0 && u <= 1) best = Math.min(best, t);
+    }
+    return isFinite(best) ? best : 1;
+  }
+
+  /* A cylinder is a box with an elliptical cap dished into each end, so near the left
+     and right of the top face the outline sits well below the bounding box.  Clipping
+     to the box there leaves the arrow floating in the gap. */
+  function rayToCylinder(dx, dy, hw, hh, e) {
+    var tSide = Math.abs(hw / (dx || 1e-9));
+    if (Math.abs(dy * tSide) <= hh - e) return tSide;
+    var c = (dy < 0 ? -1 : 1) * (hh - e);
+    var A = (dx * dx) / (hw * hw) + (dy * dy) / (e * e);
+    var B = -2 * dy * c / (e * e);
+    var C = (c * c) / (e * e) - 1;
+    var disc = B * B - 4 * A * C;
+    if (disc < 0) return tSide;
+    var root = (-B + Math.sqrt(disc)) / (2 * A);
+    return root > 0 ? root : tSide;
+  }
+
   function clipToShape(n, toward) {
     var dx = toward.x - n.x, dy = toward.y - n.y;
     if (dx === 0 && dy === 0) return { x: n.x, y: n.y + n.h / 2 };
-    var hw = n.w / 2, hh = n.h / 2, t;
+    var hw = n.w / 2, hh = n.h / 2, t, k;
     if (n.shape === 'circle' || n.shape === 'stadium' || n.shape === 'round') {
-      var a = hw, b = hh;
-      t = 1 / Math.sqrt((dx * dx) / (a * a) + (dy * dy) / (b * b));
+      t = 1 / Math.sqrt((dx * dx) / (hw * hw) + (dy * dy) / (hh * hh));
       if (n.shape !== 'circle') {
         var tr = Math.min(Math.abs(hw / (dx || 1e-9)), Math.abs(hh / (dy || 1e-9)));
         t = (t + tr) / 2;
       }
     } else if (n.shape === 'diamond') {
       t = 1 / (Math.abs(dx) / hw + Math.abs(dy) / hh);
+    } else if (n.shape === 'cylinder') {
+      t = rayToCylinder(dx, dy, hw, hh, Math.min(12, n.h / 4));
+    } else if (n.shape === 'hexagon') {
+      k = Math.min(18, n.w / 5);
+      t = rayToPolygon(dx, dy, [[-hw + k, -hh], [hw - k, -hh], [hw, 0],
+                                [hw - k, hh], [-hw + k, hh], [-hw, 0]]);
+    } else if (n.shape === 'parallelogram') {
+      k = Math.min(18, n.w / 5);
+      t = rayToPolygon(dx, dy, [[-hw + k, -hh], [hw, -hh], [hw - k, hh], [-hw, hh]]);
     } else {
       t = Math.min(Math.abs(hw / (dx || 1e-9)), Math.abs(hh / (dy || 1e-9)));
     }
@@ -1271,10 +1311,28 @@
       // above stays straight.  Push apart only as far as the minimum gap demands, then
       // slide the whole block back onto the face.  Spreading evenly regardless would
       // knock naturally-aligned edges into pointless diagonals.
-      var pos = [];
+      var wants = [], anchor = -1;
       for (var i = 0; i < count; i++) {
         var want = Math.max(-usable, Math.min(usable, list[i].ref - centre));
-        pos.push(i === 0 ? want : Math.max(want, pos[i - 1] + step));
+        if (Math.abs(want) <= 1) anchor = i;   // this edge already runs straight
+        // A departure and the arrival on the node directly across the gap are derived
+        // from the same two box positions, so they land on the same offset and share one
+        // corridor.  One run then sits on top of the other and a pair of crossing edges
+        // reads as a single forked line.  Pull arrivals in by half a port gap; an edge
+        // already running straight keeps its offset of zero and stays straight.
+        if (list[i].kind === 'in' && Math.abs(want) > 1) {
+          want -= (want > 0 ? 1 : -1) * Math.min(portGap / 2, Math.abs(want));
+        }
+        wants.push(want);
+      }
+      // Ports only have to stay far enough apart to read as separate; demanding the full
+      // port gap here is what used to drag a straight edge into a diagonal.
+      var minGap = Math.min(step, portGap * 0.45);
+      var pos = [];
+      for (i = 0; i < count; i++) pos.push(i === 0 ? wants[i] : Math.max(wants[i], pos[i - 1] + minGap));
+      if (anchor >= 0 && Math.abs(pos[anchor]) > 0.01) {
+        var slide = -pos[anchor];
+        for (i = 0; i < count; i++) pos[i] += slide;
       }
       var excess = pos[count - 1] - usable;
       if (excess > 0) for (i = 0; i < count; i++) pos[i] -= excess;
@@ -1472,16 +1530,28 @@
     return catmullRom(pts, pre, post);
   }
 
+  /* Centripetal parameterisation (alpha = 0.5), not uniform.  A long edge's dummy points
+     are spaced one rank apart while the stub off the source box is a few pixels, and
+     uniform Catmull-Rom answers that imbalance by overshooting: the curve bulges past the
+     corridor and lands back on it with a visible kink.  Weighting each segment by the
+     square root of its length is the standard cure, and it cannot cusp or self-intersect. */
   function catmullRom(pts, pre, post) {
     if (pts.length === 2) {
       return 'M' + f(pts[0].x) + ' ' + f(pts[0].y) + 'L' + f(pts[1].x) + ' ' + f(pts[1].y);
     }
     var p = [pre || pts[0]].concat(pts, [post || pts[pts.length - 1]]);
+    var t = [0];
+    for (var k = 1; k < p.length; k++) {
+      t.push(t[k - 1] + Math.max(1e-4, Math.sqrt(dist(p[k - 1], p[k]))));
+    }
     var d = 'M' + f(pts[0].x) + ' ' + f(pts[0].y);
     for (var i = 1; i + 2 < p.length; i++) {
       var p0 = p[i - 1], p1 = p[i], p2 = p[i + 1], p3 = p[i + 2];
-      var c1 = { x: p1.x + (p2.x - p0.x) / 6, y: p1.y + (p2.y - p0.y) / 6 };
-      var c2 = { x: p2.x - (p3.x - p1.x) / 6, y: p2.y - (p3.y - p1.y) / 6 };
+      var span = t[i + 1] - t[i];
+      var a = span / (3 * (t[i + 1] - t[i - 1]));
+      var b = span / (3 * (t[i + 2] - t[i]));
+      var c1 = { x: p1.x + (p2.x - p0.x) * a, y: p1.y + (p2.y - p0.y) * a };
+      var c2 = { x: p2.x - (p3.x - p1.x) * b, y: p2.y - (p3.y - p1.y) * b };
       d += 'C' + f(c1.x) + ' ' + f(c1.y) + ' ' + f(c2.x) + ' ' + f(c2.y) + ' ' + f(p2.x) + ' ' + f(p2.y);
     }
     return d;

@@ -62,12 +62,19 @@ drops an edge.
 
 ## Exports
 
-| Button | Produces |
+Nothing downloads. Each button puts the markup straight on the clipboard, so you paste it
+where you want it.
+
+| Button | Copies |
 |---|---|
-| `.drawio` | mxGraphModel with shapes, styles, and the computed waypoints. Opens in diagrams.net as editable shapes. |
-| `.svg for Office` | Flat SVG using only presentation attributes. PowerPoint's Convert to Shape turns it into native objects. |
-| `.svg` | Styled SVG with ids and classes, for the web. |
-| `copy xml` | The draw.io XML on the clipboard, for Extras &gt; Edit Diagram. |
+| `copy .drawio` | mxGraphModel with shapes, styles, and the computed waypoints. Paste into diagrams.net via Extras &gt; Edit Diagram and it opens as editable shapes. |
+| `copy .svg for Office` | Flat SVG using only presentation attributes. Paste into PowerPoint, then Convert to Shape for native objects. |
+| `copy .svg` | Styled SVG with ids and classes, for the web. |
+
+The payload always goes on the clipboard as `text/plain`, because that is what Edit Diagram,
+text editors, and paste-as-text read. A typed copy rides along as a web custom format for
+anything that can use it. Chrome refuses `image/svg+xml` on the clipboard outright, so a
+plain paste into a native drawing app gets the SVG source rather than a rendered picture.
 
 ## The comparison pane
 

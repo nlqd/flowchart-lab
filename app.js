@@ -178,7 +178,9 @@ function ensureSvg(){
   if (svgEl) return;
   svgEl = el('svg',{xmlns:NS});
   var defs = el('defs');
-  var m = el('marker',{id:'ar',viewBox:'0 0 10 10',refX:'9',refY:'5',
+  // namespaced: a bare id here collides with the controls in the markup, and a
+  // url(#id) that resolves to an <input> paints no arrowhead at all
+  var m = el('marker',{id:'fl-arrow',viewBox:'0 0 10 10',refX:'9',refY:'5',
     markerWidth:'7',markerHeight:'7',orient:'auto-start-reverse',markerUnits:'strokeWidth'});
   m.appendChild(el('path',{d:'M0 0 L10 5 L0 10 z',fill:'#5a626e'}));
   defs.appendChild(m); svgEl.appendChild(defs);
@@ -222,7 +224,7 @@ function render(L){
     p.setAttribute('stroke', '#5a626e');
     p.setAttribute('stroke-width', e.style==='thick'?2.6:1.5);
     if(e.style==='dashed') p.setAttribute('stroke-dasharray','6 4'); else p.removeAttribute('stroke-dasharray');
-    if(e.arrow==='none') p.removeAttribute('marker-end'); else p.setAttribute('marker-end','url(#ar)');
+    if(e.arrow==='none') p.removeAttribute('marker-end'); else p.setAttribute('marker-end','url(#fl-arrow)');
   });
 
   L.edges.forEach(function(e){
@@ -523,38 +525,65 @@ $('engine').addEventListener('change', function(){
 });
 
 /* ---------- export ---------- */
-function download(name, text, mime){
-  var b=new Blob([text],{type:mime}), u=URL.createObjectURL(b);
-  var a=document.createElement('a'); a.href=u; a.download=name; a.click();
-  setTimeout(function(){URL.revokeObjectURL(u);},1500);
-}
 function flash(btn,msg){
-  var t=btn.textContent; btn.textContent=msg;
-  setTimeout(function(){btn.textContent=t;},1300);
+  if(btn.dataset.restore) clearTimeout(+btn.dataset.restore);
+  else btn.dataset.label = btn.textContent;
+  btn.textContent = msg;
+  btn.dataset.restore = setTimeout(function(){
+    btn.textContent = btn.dataset.label; delete btn.dataset.restore;
+  },1300);
 }
-$('ex-svg').onclick=function(){
+
+/* Chrome's async clipboard only accepts text/plain, text/html and image/png natively;
+   image/svg+xml is refused outright. Anything else has to travel as a "web " custom
+   format, which only web apps that opt in can read. So the payload always goes on
+   text/plain, which is what draw.io's Edit Diagram box, editors, and paste-as-text all
+   read, and the typed copy rides along for whatever can use it. */
+function copyOut(btn, text, webType){
+  function attempt(withTyped){
+    if (!(window.ClipboardItem && navigator.clipboard && navigator.clipboard.write)) {
+      return navigator.clipboard && navigator.clipboard.writeText
+        ? navigator.clipboard.writeText(text) : Promise.reject();
+    }
+    var reps = {'text/plain': new Blob([text], {type:'text/plain'})};
+    if (withTyped && webType) reps[webType] = new Blob([text], {type:webType});
+    try { return navigator.clipboard.write([new ClipboardItem(reps)]); }
+    catch (e) { return Promise.reject(e); }
+  }
+  // Chrome parks a clipboard write until the document regains focus, so the promise can
+  // sit pending forever and the button would never say anything. Cap the wait and let
+  // the synchronous fallback take over; writing the same text twice is harmless.
+  var settled = false;
+  function guard(p){
+    return new Promise(function(res, rej){
+      p.then(function(v){ if(!settled){ settled=true; res(v); } },
+             function(e){ if(!settled){ settled=true; rej(e); } });
+      setTimeout(function(){ if(!settled){ settled=true; rej(new Error('clipboard timeout')); } }, 1200);
+    });
+  }
+  guard(attempt(true).catch(function(){ return attempt(false); }))
+    .then(function(){ flash(btn,'copied'); })
+    .catch(function(){
+      var ta=document.createElement('textarea');
+      ta.value=text; ta.style.cssText='position:fixed;top:-1000px';
+      document.body.appendChild(ta); ta.select();
+      try { document.execCommand('copy'); flash(btn,'copied'); }
+      catch(e){ flash(btn,'copy failed'); }
+      ta.remove();
+    });
+}
+
+$('ex-drawio').onclick=function(){
   if(!last) return;
-  download('flowchart.svg', FlowExport.toSVG(last,{mode:'app'}), 'image/svg+xml');
+  copyOut(this, FlowExport.toDrawio(last,{routing:$('routing').value}), 'web application/xml');
 };
 $('ex-office').onclick=function(){
   if(!last) return;
-  download('flowchart-office.svg', FlowExport.toSVG(last,{mode:'flat'}), 'image/svg+xml');
+  copyOut(this, FlowExport.toSVG(last,{mode:'flat'}), 'web image/svg+xml');
 };
-$('ex-drawio').onclick=function(){
+$('ex-svg').onclick=function(){
   if(!last) return;
-  download('flowchart.drawio', FlowExport.toDrawio(last,{routing:$('routing').value}), 'application/xml');
-};
-$('ex-copy').onclick=function(){
-  if(!last) return;
-  var xml=FlowExport.toDrawio(last,{routing:$('routing').value});
-  var self=this;
-  (navigator.clipboard ? navigator.clipboard.writeText(xml) : Promise.reject())
-    .then(function(){ flash(self,'copied'); })
-    .catch(function(){
-      var ta=document.createElement('textarea'); ta.value=xml; document.body.appendChild(ta);
-      ta.select(); try{document.execCommand('copy'); flash(self,'copied');}catch(e){flash(self,'copy failed');}
-      ta.remove();
-    });
+  copyOut(this, FlowExport.toSVG(last,{mode:'app'}), 'web image/svg+xml');
 };
 
 window.addEventListener('resize',function(){ if(last && firstRun===false) applyView(); });
