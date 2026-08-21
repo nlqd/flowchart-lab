@@ -2368,7 +2368,9 @@ function readout(metrics, s, prevStats){
     var dEl=cell.querySelector('[data-d]');
     if(m.text||!prevStats){ dEl.className='d'; dEl.textContent=''; return; }
     var was=m.get(prevStats), diff=v-was;
-    if(diff===0){ dEl.className='d'; dEl.textContent=''; return; }
+    // a float metric such as stress otherwise shows its full binary expansion here
+    diff = Math.round(diff*100)/100;
+    if(Math.abs(diff) < 0.005){ dEl.className='d'; dEl.textContent=''; return; }
     var better = m.lower ? diff<0 : diff>0;
     dEl.className='d on '+(better?'down':'up');
     dEl.textContent=(diff>0?'+':'')+diff;
