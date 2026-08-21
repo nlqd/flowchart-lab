@@ -1885,6 +1885,7 @@ input[type=range]{flex:1; accent-color:var(--signal); min-width:0}
     parse: parse, layout: layout, setMeasurer: setMeasurer, DEFAULTS: DEFAULTS,
     sizeNodes: sizeNodes,   // shared so a second engine sizes boxes identically
     clipToShape: clipToShape,  // and clips edge ends to the same outlines
+    greedyFAS: greedyFAS,      // and breaks cycles the same way
     _internals: {
       greedyFAS: greedyFAS, longestPath: longestPath, coffmanGraham: coffmanGraham,
       networkSimplex: networkSimplex, promote: promote, buildDag: buildDag,
@@ -2727,21 +2728,38 @@ $('ex-svg').onclick=function(){
      topological order and pushing only the head of a violated edge satisfies
      every constraint in one pass on a DAG; a cycle cannot be satisfied at all,
      so those edges are reported rather than fought over. */
-  function enforceFlow(nodes, edges, opts) {
+  function enforceFlow(nodes, edges, opts, host) {
     var o = opts || {};
     var axis = o.axis === 'x' ? 'x' : 'y';
     var gap = o.gap === undefined ? 60 : o.gap;
     var idx = {}, i;
     for (i = 0; i < nodes.length; i++) idx[nodes[i].id] = i;
 
-    var succ = [], indeg = [];
-    for (i = 0; i < nodes.length; i++) { succ.push([]); indeg.push(0); }
-    var real = [];
+    /* A retry loop makes the graph cyclic, and then every node has an incoming
+       edge, the topological queue starts empty, and the sweep order collapses to
+       whatever order the nodes were parsed in.  Pushing a node down after one of
+       its own successors has already been placed then breaks an edge that was
+       perfectly satisfiable.  Break the cycles first, exactly the way the Sugiyama
+       engine does, and sweep the resulting DAG. */
+    var work = [];
     edges.forEach(function (e) {
+      if (idx[e.from] === undefined || idx[e.to] === undefined) return;
+      if (e.from === e.to) return;
+      work.push({ from: e.from, to: e.to });
+    });
+    var reversed = {};
+    if (host && host.greedyFAS) {
+      host.greedyFAS(nodes.map(function (nd) { return nd.id; }), work);
+      work.forEach(function (e, k) { if (e.reversed) reversed[k] = true; });
+    }
+
+    var succ = [], indeg = [], pairs = [];
+    for (i = 0; i < nodes.length; i++) { succ.push([]); indeg.push(0); }
+    work.forEach(function (e, k) {
       var a = idx[e.from], b = idx[e.to];
-      if (a === undefined || b === undefined || a === b) return;
-      real.push([a, b]);
-      succ[a].push(b); indeg[b]++;
+      pairs.push([a, b]);
+      var t = reversed[k] ? b : a, h = reversed[k] ? a : b;
+      succ[t].push(h); indeg[h]++;
     });
 
     var queue = [], order = [];
@@ -2751,21 +2769,26 @@ $('ex-svg').onclick=function(){
       for (i = 0; i < succ[v].length; i++) if (--indeg[succ[v][i]] === 0) queue.push(succ[v][i]);
     }
     var acyclic = order.length === nodes.length;
-    for (i = 0; i < nodes.length; i++) if (order.indexOf(i) < 0) order.push(i);
+    var seen = {};
+    order.forEach(function (k) { seen[k] = true; });
+    for (i = 0; i < nodes.length; i++) if (!seen[i]) order.push(i);
 
-    var pushed = 0, violated = 0;
-    for (var k = 0; k < order.length; k++) {
-      var u = order[k];
+    var pushed = 0;
+    for (var k2 = 0; k2 < order.length; k2++) {
+      var u = order[k2];
       for (i = 0; i < succ[u].length; i++) {
         var w = succ[u][i];
         var need = nodes[u][axis] + gap;
         if (nodes[w][axis] < need) { pushed += need - nodes[w][axis]; nodes[w][axis] = need; }
       }
     }
-    for (i = 0; i < real.length; i++) {
-      if (nodes[real[i][1]][axis] <= nodes[real[i][0]][axis] + 0.5) violated++;
+    // report against the edges as written, not as reoriented
+    var violated = 0;
+    for (i = 0; i < pairs.length; i++) {
+      if (nodes[pairs[i][1]][axis] <= nodes[pairs[i][0]][axis] + 0.5) violated++;
     }
-    return { acyclic: acyclic, pushed: pushed, backwardEdges: violated };
+    return { acyclic: acyclic, pushed: pushed, backwardEdges: violated,
+             reversedForOrder: Object.keys(reversed).length };
   }
 
   /* Straight-line crossings, so the two workbenches can be scored on the same
@@ -2853,13 +2876,34 @@ $('ex-svg').onclick=function(){
       nodes[i].y = res.X[2 * i + 1] * scale;
     }
 
-    var flowInfo = null;
-    if (o.flow === 'TB' || o.flow === 'LR') {
-      flowInfo = enforceFlow(nodes, edges, { axis: o.flow === 'TB' ? 'y' : 'x', gap: o.flowGap });
+    /* Two constraint sets, and satisfying one can break the other: pushing boxes
+       apart moves a node back across the ordering that flow just imposed.  Alternate
+       the projections until neither has anything left to do.  This is the usual
+       alternating-projection fix, and on these graphs it settles in a couple of
+       rounds. */
+    var wantFlow = (o.flow === 'TB' || o.flow === 'LR');
+    var flowAxis = o.flow === 'TB' ? 'y' : 'x';
+    var flowInfo = null, overlapInfo = null;
+    var rounds = (wantFlow && o.removeOverlaps) ? 4 : 1;
+    for (var pass = 0; pass < rounds; pass++) {
+      if (wantFlow) flowInfo = enforceFlow(nodes, edges, { axis: flowAxis, gap: o.flowGap }, host);
+      overlapInfo = o.removeOverlaps
+        ? removeOverlaps(nodes, { pad: o.overlapPad })
+        : { passes: 0, overlapsLeft: countOverlaps(nodes, 0), travel: 0 };
+      if (!wantFlow || (flowInfo && flowInfo.pushed < 0.5 && overlapInfo.travel < 0.5)) break;
     }
-    var overlapInfo = o.removeOverlaps
-      ? removeOverlaps(nodes, { pad: o.overlapPad })
-      : { passes: 0, overlapsLeft: countOverlaps(nodes, 0), travel: 0 };
+    // count violations against the final positions, not against a mid-pipeline snapshot
+    var backward = null;
+    if (wantFlow) {
+      var pos = {};
+      nodes.forEach(function (nd) { pos[nd.id] = nd; });
+      backward = 0;
+      edges.forEach(function (e) {
+        if (e.from === e.to) return;
+        var a = pos[e.from], b = pos[e.to];
+        if (a && b && b[flowAxis] <= a[flowAxis] + 0.5) backward++;
+      });
+    }
 
     var byId = {};
     nodes.forEach(function (nd) { byId[nd.id] = nd; });
@@ -2934,7 +2978,7 @@ $('ex-svg').onclick=function(){
         overlaps: countOverlaps(nodes, 0),
         diameter: comp.diameter,
         epochs: o.epochs,
-        backward: flowInfo ? flowInfo.backwardEdges : null,
+        backward: backward,
         width: Math.round(W), height: Math.round(H),
         ar: +(W / Math.max(1, H)).toFixed(2),
         ms: +(t1 - t0).toFixed(1)
