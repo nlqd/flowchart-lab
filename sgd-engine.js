@@ -122,7 +122,7 @@
     var p = 0;
     for (var i = 0; i < n; i++) for (var j = i + 1; j < n; j++) { pi[p] = i; pj[p] = j; p++; }
 
-    var etas = schedule(d, n, epochs, epsilon);
+    var etas = o.etas || schedule(d, n, epochs, epsilon);
     var trace = [];
 
     for (var t = 0; t < etas.length; t++) {
@@ -236,10 +236,15 @@
       if (e.from === e.to) return;
       work.push({ from: e.from, to: e.to });
     });
-    var reversed = {};
+    /* Rüegg, Kieffer, Dwyer, Marriott & Wybrow (GD 2014) tried three ways of handling
+       cycles and found the best was to run the same greedy feedback arc set heuristic
+       the layered pipeline uses and then withhold a flow constraint from every edge in
+       that set.  Withholding leaves those edges free for the stress term to place;
+       reversing them, which is what this used to do, forces them to point backwards. */
+    var freed = {};
     if (host && host.greedyFAS) {
       host.greedyFAS(nodes.map(function (nd) { return nd.id; }), work);
-      work.forEach(function (e, k) { if (e.reversed) reversed[k] = true; });
+      work.forEach(function (e, k) { if (e.reversed) freed[k] = true; });
     }
 
     var succ = [], indeg = [], pairs = [];
@@ -247,8 +252,8 @@
     work.forEach(function (e, k) {
       var a = idx[e.from], b = idx[e.to];
       pairs.push([a, b]);
-      var t = reversed[k] ? b : a, h = reversed[k] ? a : b;
-      succ[t].push(h); indeg[h]++;
+      if (freed[k]) return;                 // on a cycle: left to the stress term
+      succ[a].push(b); indeg[b]++;
     });
 
     var queue = [], order = [];
@@ -277,7 +282,7 @@
       if (nodes[pairs[i][1]][axis] <= nodes[pairs[i][0]][axis] + 0.5) violated++;
     }
     return { acyclic: acyclic, pushed: pushed, backwardEdges: violated,
-             reversedForOrder: Object.keys(reversed).length };
+             freedByFAS: Object.keys(freed).length };
   }
 
   /* Straight-line crossings, so the two workbenches can be scored on the same
@@ -355,15 +360,17 @@
 
     var d = allPairs(n, adj);
     var comp = bridgeComponents(d, n);
-    var res = run(d, n, { epochs: o.epochs, epsilon: o.epsilon, seed: o.seed });
-    var finalStress = res.trace.length ? res.trace[res.trace.length - 1].stress : 0;
+    // scale hop distance into pixels up front so every later stage works in one unit.
+    // Stress is unaffected: w_ij = d_ij^-2 cancels the squared residual exactly.
+    for (i = 0; i < n * n; i++) d[i] *= o.edgeLength;
 
-    // the optimiser works in units of graph distance; scale to pixels once at the end
-    var scale = o.edgeLength;
-    for (i = 0; i < n; i++) {
-      nodes[i].x = res.X[2 * i] * scale;
-      nodes[i].y = res.X[2 * i + 1] * scale;
-    }
+    /* Rüegg et al. run the layout three times, adding constraints as they go: untangle
+       first, then add flow while overlaps are still allowed so nodes can float past
+       each other and swap, and only then separate the boxes.  Applying non-overlap
+       any earlier freezes whatever ordering the first pass happened to land on. */
+    var res = run(d, n, { epochs: o.epochs, epsilon: o.epsilon, seed: o.seed });
+    var trace = res.trace.slice();
+    for (i = 0; i < n; i++) { nodes[i].x = res.X[2 * i]; nodes[i].y = res.X[2 * i + 1]; }
 
     /* Two constraint sets, and satisfying one can break the other: pushing boxes
        apart moves a node back across the ordering that flow just imposed.  Alternate
@@ -373,13 +380,37 @@
     var wantFlow = (o.flow === 'TB' || o.flow === 'LR');
     var flowAxis = o.flow === 'TB' ? 'y' : 'x';
     var flowInfo = null, overlapInfo = null;
-    var rounds = (wantFlow && o.removeOverlaps) ? 4 : 1;
+
+    if (wantFlow) {
+      // stage two: flow settles while boxes may still overlap.  Each round projects
+      // onto the ordering, then lets a damped run of the optimiser pull the drawing
+      // back toward low stress, which is what lets a node slide past its neighbour.
+      var relax = [];
+      for (i = 0; i < 4; i++) relax.push(o.edgeLength * o.edgeLength * Math.pow(0.35, i + 1));
+      for (var r = 0; r < 3; r++) {
+        flowInfo = enforceFlow(nodes, edges, { axis: flowAxis, gap: o.flowGap }, host);
+        var cur = new Float64Array(2 * n);
+        for (i = 0; i < n; i++) { cur[2 * i] = nodes[i].x; cur[2 * i + 1] = nodes[i].y; }
+        var refine = run(d, n, { init: cur, etas: relax, seed: o.seed + 101 + r });
+        for (i = 0; i < n; i++) { nodes[i].x = refine.X[2 * i]; nodes[i].y = refine.X[2 * i + 1]; }
+        trace = trace.concat(refine.trace.map(function (t, k) {
+          return { epoch: trace.length + k, eta: t.eta, stress: t.stress };
+        }));
+      }
+      flowInfo = enforceFlow(nodes, edges, { axis: flowAxis, gap: o.flowGap }, host);
+    }
+
+    /* Stage three: separate the boxes.  The two projections can undo one another, so
+       alternate, and always finish on non-overlap the way the paper orders it: boxes
+       sitting on top of each other read far worse than an edge that leans the wrong
+       way, and any edge still leaning is counted honestly below. */
+    var rounds = (wantFlow && o.removeOverlaps) ? 6 : 1;
     for (var pass = 0; pass < rounds; pass++) {
-      if (wantFlow) flowInfo = enforceFlow(nodes, edges, { axis: flowAxis, gap: o.flowGap }, host);
+      if (wantFlow && pass > 0) flowInfo = enforceFlow(nodes, edges, { axis: flowAxis, gap: o.flowGap }, host);
       overlapInfo = o.removeOverlaps
         ? removeOverlaps(nodes, { pad: o.overlapPad })
         : { passes: 0, overlapsLeft: countOverlaps(nodes, 0), travel: 0 };
-      if (!wantFlow || (flowInfo && flowInfo.pushed < 0.5 && overlapInfo.travel < 0.5)) break;
+      if (!wantFlow || overlapInfo.travel < 0.5) break;
     }
     // count violations against the final positions, not against a mid-pipeline snapshot
     var backward = null;
@@ -449,6 +480,10 @@
     });
 
     var W = maxX - minX + pad * 2, H = maxY - minY + pad * 2;
+    // report the stress of what is actually drawn, after every constraint pass
+    var finalX = new Float64Array(2 * n);
+    for (i = 0; i < n; i++) { finalX[2 * i] = nodes[i].x; finalX[2 * i + 1] = nodes[i].y; }
+    var stressNow = stress(finalX, d, n);
     var t1 = (typeof performance !== 'undefined' ? performance.now() : Date.now());
 
     return {
@@ -459,10 +494,10 @@
       }),
       edges: outEdges,
       width: Math.round(W), height: Math.round(H), dir: o.flow,
-      trace: res.trace,
+      trace: trace,
       stats: {
         nodes: n, edges: outEdges.length,
-        stress: +finalStress.toFixed(2),
+        stress: +stressNow.toFixed(2),
         crossings: crossings,
         overlaps: countOverlaps(nodes, 0),
         diameter: comp.diameter,

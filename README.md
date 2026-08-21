@@ -69,12 +69,27 @@ distance everywhere at once. There is no solver, no eigendecomposition, and no q
 step moves exactly the two vertices of one pair.
 
 Nothing in that model knows a node is a box or that an edge points somewhere, so both are
-imposed afterwards by projecting onto the constraint set:
+imposed afterwards by projecting onto the constraint set. The arrangement follows Rüegg,
+Kieffer, Dwyer, Marriott & Wybrow, *Stress-Minimizing Orthogonal Layout of Data Flow Diagrams
+with Ports* (GD 2014,
+[PDF](https://rtsys.informatik.uni-kiel.de/~biblio/downloads/papers/gd14.pdf)), which is the
+published version of this same idea:
 
-- flow direction, by sweeping in topological order and pushing the head of any edge that
-  points the wrong way. Edges on a cycle cannot be satisfied and are counted, not fought over.
-- box separation, after Gansner & Hu's PRISM, which measures itself on how little it disturbs
+- Flow direction is a separation constraint, `pos(u) + gap <= pos(v)` for every edge. Cycles
+  make some of those contradictory. Rüegg et al. compared three ways of coping and found the
+  best was to run the greedy feedback arc set heuristic the layered pipeline already uses and
+  withhold a flow constraint from every edge in that set, leaving them free for the stress term
+  rather than forcing them backwards. Both engines here call the same `greedyFAS`.
+- The run is staged, again following them: untangle first, then add flow while boxes are still
+  allowed to overlap so nodes can float past each other and swap, and separate the boxes only
+  at the end. Applying non-overlap earlier freezes whatever ordering the first pass happened to
+  land on. Switching to this order cut drawn stress across the presets by about 40%.
+- Box separation is after Gansner & Hu's PRISM, which measures itself on how little it disturbs
   the layout it was handed.
+
+The reported stress is measured on the drawing as rendered, after every constraint pass, not on
+the optimiser's internal state. It is therefore higher than the raw stress the optimiser
+reaches, and it is the number that actually describes the picture.
 
 Runs are seeded and deterministic. Changing the seed finds a different local minimum, which is
 the honest way to see how stable a given graph is.
