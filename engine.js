@@ -1568,6 +1568,8 @@
 
   return {
     parse: parse, layout: layout, setMeasurer: setMeasurer, DEFAULTS: DEFAULTS,
+    sizeNodes: sizeNodes,   // shared so a second engine sizes boxes identically
+    clipToShape: clipToShape,  // and clips edge ends to the same outlines
     _internals: {
       greedyFAS: greedyFAS, longestPath: longestPath, coffmanGraham: coffmanGraham,
       networkSimplex: networkSimplex, promote: promote, buildDag: buildDag,

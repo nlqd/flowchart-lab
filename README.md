@@ -1,28 +1,47 @@
 # Flowchart Lab
 
-A Sugiyama layout engine for mermaid-style flowcharts, with the pipeline exposed as controls
-so you can see what each phase costs. Swap the layering algorithm and watch the dummy count
-move. Turn crossing minimisation off and watch the picture fall apart. Put the result next to
-mermaid's own output and judge for yourself.
+Two layout engines for the same mermaid-style source, each with its pipeline exposed as
+controls, so you can see what the choices cost.
 
-No build step, no dependencies, no server. It is three JavaScript files and an HTML page.
+`index.html` is the Sugiyama workbench: swap the layering algorithm and watch the dummy count
+move, turn crossing minimisation off and watch the picture fall apart.
+
+`sgd.html` is the stress workbench: the same graph placed by stochastic gradient descent on a
+continuous objective, with no layers at all. Its compare pane draws the Sugiyama result beside
+it from the same source and the same box sizes, so the only difference is which engine placed
+the nodes.
+
+No build step, no dependencies, no server. Plain ES5 in a handful of files.
 
 ## Running it
 
-Open `index.html`. Any static host works, including a local one:
+Open `index.html` or `sgd.html`. Any static host works, including a local one:
 
 ```sh
 python3 -m http.server 8000
 ```
 
-For a copy you can email or drop on a shared drive, `flowchart-lab.html` is the same app
-inlined into one file that runs from `file://`. Regenerate it after changing anything:
+For a copy you can email or drop on a shared drive, `flowchart-lab.html` and `stress-lab.html`
+are the same two apps inlined into one file each, runnable from `file://`. Regenerate them
+after changing anything:
 
 ```sh
 node build-standalone.js
 ```
 
+## The two engines
+
+| | Sugiyama (`index.html`) | Stress (`sgd.html`) |
+|---|---|---|
+| Optimises | crossings, combinatorially, rank by rank | one continuous objective over all pairs at once |
+| Knows about direction | yes, it is the first thing it decides | no, imposed afterwards as a constraint |
+| Knows about box size | yes, first-class in x-coordinate assignment | no, imposed afterwards by pushing boxes apart |
+| Needs | nothing global | all-pairs shortest paths |
+| Typical shape | tall and narrow | closer to square |
+
 ## What it does
+
+### Sugiyama
 
 The engine implements the four classical Sugiyama phases plus routing and wrapping:
 
@@ -35,7 +54,32 @@ The engine implements the four classical Sugiyama phases plus routing and wrappi
 5. Cut-and-stack wrapping to hit a target aspect ratio
 6. Orthogonal, polyline, or spline routing, with edges attaching to faces and sharing tracks
 
-`LAYOUT-ALGORITHMS.md` explains why each of these was chosen, with pseudocode and measurements.
+### Stress by SGD
+
+`sgd-engine.js` implements Algorithm 1 of Zheng, Pawar & Goodman, *Graph Drawing by
+Stochastic Gradient Descent* (IEEE TVCG 2019, [arXiv:1710.04626](https://arxiv.org/pdf/1710.04626)),
+with the exponential annealing schedule from their section 2.1. It minimises
+
+```
+stress(X) = sum over i<j of  w_ij * ( |Xi - Xj| - d_ij )^2 ,   w_ij = d_ij^-2
+```
+
+where `d_ij` is hop distance, so the drawing tries to make Euclidean distance match graph
+distance everywhere at once. There is no solver, no eigendecomposition, and no quadtree: each
+step moves exactly the two vertices of one pair.
+
+Nothing in that model knows a node is a box or that an edge points somewhere, so both are
+imposed afterwards by projecting onto the constraint set:
+
+- flow direction, by sweeping in topological order and pushing the head of any edge that
+  points the wrong way. Edges on a cycle cannot be satisfied and are counted, not fought over.
+- box separation, after Gansner & Hu's PRISM, which measures itself on how little it disturbs
+  the layout it was handed.
+
+Runs are seeded and deterministic. Changing the seed finds a different local minimum, which is
+the honest way to see how stable a given graph is.
+
+`LAYOUT-ALGORITHMS.md` explains the Sugiyama choices, with pseudocode and measurements.
 
 ## Supported syntax
 
@@ -86,3 +130,8 @@ no connection the pane says so and everything else keeps working.
 
 Subgraphs and clusters, port constraints, multi-line edge labels, and the non-flowchart mermaid
 diagram types. `--x` and `--o` link ends parse correctly but draw as ordinary arrowheads.
+
+The stress engine routes every edge as a straight line, so it has no orthogonal or spline mode
+and no edge-crossing minimisation of its own; crossings are an emergent property there, not an
+optimised one. It also computes all-pairs shortest paths, which is fine at the few hundred
+nodes this is built for and would need the pivot-based sparse variant beyond that.

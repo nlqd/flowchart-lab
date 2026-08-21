@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stress Lab — SGD layout workbench</title>
+<meta name="description" content="Graph layout by stochastic gradient descent on the stress objective, after Zheng, Pawar and Goodman, with a constraint layer for rectangles and flow direction, side by side with the Sugiyama engine.">
+<meta name="theme-color" content="#14181d">
+<meta name="color-scheme" content="dark">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 18 18'%3E%3Crect width='18' height='18' rx='3' fill='%2314181d'/%3E%3Cpath d='M2 15C6 15 5 4 9 4s3 11 7 11' fill='none' stroke='%235fb37a' stroke-width='1.7' stroke-linecap='round'/%3E%3Ccircle cx='9' cy='4' r='1.8' fill='%23d99a2b'/%3E%3C/svg%3E">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Stress Lab">
+<meta property="og:description" content="Stress layout by stochastic gradient descent, side by side with a Sugiyama pipeline.">
+<meta name="twitter:card" content="summary">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="lab.css">
+<style>
+/* convergence trace: the one thing this engine can show that a layered pipeline cannot */
+.trace{padding:10px 12px; border-top:1px solid var(--rule); background:var(--slate)}
+.trace-head{display:flex; align-items:baseline; gap:8px; margin-bottom:7px}
+.trace-head b{font-size:11px; font-weight:500; letter-spacing:.12em; text-transform:uppercase; color:var(--dim)}
+.trace-head span{font-size:11px; color:var(--dim)}
+#spark{display:block; width:100%; height:56px}
+</style>
+</head>
+<body>
+
+<header>
+  <span class="mark">
+    <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
+      <path d="M1 15C5 15 4 4 9 4s4 11 8 11" fill="none" stroke="#5fb37a" stroke-width="1.4" stroke-linecap="round"/>
+      <circle cx="9" cy="4" r="1.6" fill="#d99a2b"/>
+    </svg>
+    Stress Lab <small>· SGD workbench</small>
+  </span>
+  <span class="siblings">
+    <a href="index.html">Sugiyama lab</a>
+    <a href="sgd.html" class="on">Stress lab</a>
+  </span>
+  <span class="spacer"></span>
+  <span class="exports">
+    <button id="ex-drawio" class="primary" title="draw.io XML on the clipboard — paste into diagrams.net via Extras &gt; Edit Diagram">copy .drawio</button>
+    <button id="ex-office" title="Flat SVG on the clipboard — paste into PowerPoint, then Convert to Shape">copy .svg for Office</button>
+    <button id="ex-svg" title="Styled SVG on the clipboard, for the web">copy .svg</button>
+  </span>
+</header>
+
+<main>
+  <section class="side">
+    <div class="side-head">
+      <span>source</span>
+      <select id="preset" title="Load an example">
+        <option value="approval">approval flow</option>
+        <option value="chain">long chain</option>
+        <option value="crossy">crossing stress</option>
+        <option value="state">retry state machine</option>
+        <option value="wide">wide fan</option>
+        <option value="incident">very long: incident response</option>
+      </select>
+    </div>
+    <div class="editor-wrap">
+      <div class="gutter" id="gutter">1</div>
+      <textarea id="src" spellcheck="false" aria-label="Flowchart source"></textarea>
+    </div>
+    <div class="errbar" id="err"></div>
+
+    <div class="controls">
+      <div class="grp">
+        <h4>optimiser</h4>
+        <div class="row">
+          <label for="epochs">epochs</label>
+          <input type="range" id="epochs" min="1" max="80" value="30">
+          <span class="val" id="epochsv">30</span>
+        </div>
+        <div class="row">
+          <label for="edgeLength">hop length</label>
+          <input type="range" id="edgeLength" min="40" max="220" value="110">
+          <span class="val" id="edgeLengthv">110</span>
+        </div>
+        <div class="row">
+          <label for="seed">seed</label>
+          <input type="range" id="seed" min="1" max="40" value="1">
+          <span class="val" id="seedv">1</span>
+        </div>
+        <p class="effect" id="fx-epochs"></p>
+        <p class="effect" id="fx-seed"></p>
+      </div>
+
+      <div class="grp">
+        <h4>constraints</h4>
+        <div class="row">
+          <label for="flow">flow direction</label>
+          <select id="flow">
+            <option value="none">none (pure stress)</option>
+            <option value="TB" selected>top to bottom</option>
+            <option value="LR">left to right</option>
+          </select>
+        </div>
+        <div class="row">
+          <label for="flowGap">flow gap</label>
+          <input type="range" id="flowGap" min="20" max="160" value="70">
+          <span class="val" id="flowGapv">70</span>
+        </div>
+        <div class="row">
+          <label class="check"><input type="checkbox" id="noOverlap" checked> separate boxes</label>
+        </div>
+        <div class="row">
+          <label for="overlapPad">box gap</label>
+          <input type="range" id="overlapPad" min="0" max="48" value="10">
+          <span class="val" id="overlapPadv">10</span>
+        </div>
+        <p class="effect" id="fx-flow"></p>
+        <p class="effect" id="fx-overlap"></p>
+      </div>
+    </div>
+
+    <div class="trace">
+      <div class="trace-head"><b>convergence</b><span id="trace-note"></span></div>
+      <svg id="spark" viewBox="0 0 300 56" preserveAspectRatio="none" aria-label="Stress per epoch"></svg>
+    </div>
+  </section>
+
+  <section class="stage">
+    <div class="stage-head">
+      <label for="engine" style="color:var(--dim)">compare with</label>
+      <select id="engine" style="font-size:11px; padding:3px 6px">
+        <option value="none">nothing</option>
+        <option value="sugiyama">this repo's Sugiyama engine</option>
+        <option value="mermaid">mermaid (dagre)</option>
+      </select>
+      <span id="cmpstat" style="color:var(--dim)"></span>
+      <span class="spacer"></span>
+      <span id="zoomlabel">100%</span>
+      <button class="zoombtn" id="zin">+</button>
+      <button class="zoombtn" id="zout">−</button>
+      <button class="zoombtn" id="zfit">fit</button>
+    </div>
+    <div class="panes">
+      <div class="pane">
+        <span class="pane-tag" id="tag-a">stress / SGD</span>
+        <div id="canvas" tabindex="0" role="img" aria-label="Rendered flowchart"></div>
+      </div>
+      <div class="pane" id="compare">
+        <span class="pane-tag" id="tag-b">sugiyama</span>
+        <div id="cmpview"></div>
+      </div>
+    </div>
+    <div class="readout" id="readout"></div>
+  </section>
+</main>
+
+<script src="engine.js"></script>
+<script src="exporters.js"></script>
+<script src="lab-ui.js"></script>
+<script src="sgd-engine.js"></script>
+<script src="sgd-app.js"></script>
+</body>
+</html>
